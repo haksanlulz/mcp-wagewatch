@@ -75,22 +75,17 @@ function apiKey(): string {
 
 let queue: Promise<unknown> = Promise.resolve();
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Run `fn` after all prior throttled calls, spacing each by THROTTLE_MS. */
+/**
+ * Run `fn` after all prior throttled calls, spacing each request START by
+ * THROTTLE_MS. The returned promise settles as soon as `fn` does; the gap is
+ * added to the queue for the NEXT call rather than padded onto this one. `fn`
+ * runs on both settle paths so a prior rejection cannot stall the queue.
+ */
 function throttled<T>(fn: () => Promise<T>): Promise<T> {
-  const run = queue.then(async () => {
-    const result = await fn();
-    await sleep(THROTTLE_MS);
-    return result;
-  });
-  // Keep the queue alive regardless of success/failure; swallow to avoid
-  // unhandled-rejection noise on the internal chain (callers still see errors).
+  const run = queue.then(fn, fn);
   queue = run.then(
-    () => undefined,
-    () => undefined,
+    () => new Promise((r) => setTimeout(r, THROTTLE_MS)),
+    () => new Promise((r) => setTimeout(r, THROTTLE_MS)),
   );
   return run;
 }
@@ -125,6 +120,13 @@ function extractRows(json: unknown): Row[] {
     for (const key of ["data", "records", "results"]) {
       if (Array.isArray(obj[key])) return obj[key] as Row[];
     }
+    // A 200 whose body is a non-null object with none of the known record arrays
+    // is an API-level error envelope (e.g. {"status":"error","message":"quota
+    // exceeded"}), NOT an empty result set. Failing open here would report a false
+    // "0 cases" / "no wage-theft history", so reject it.
+    throw new Error(
+      "DOL API returned an unrecognized response: " + JSON.stringify(json).slice(0, 300),
+    );
   }
   return [];
 }
@@ -139,12 +141,13 @@ async function dolGet(params: QueryParams): Promise<Row[]> {
   if (params.sort_by) url.searchParams.set("sort_by", params.sort_by);
   if (params.fields?.length) url.searchParams.set("fields", params.fields.join(","));
   if (params.filter) url.searchParams.set("filter_object", JSON.stringify(params.filter));
-  // The DOL docs pass the key as the `X-API-KEY` query parameter; we also send it
-  // as a header for compatibility. The API reads whichever it prefers.
-  url.searchParams.set("X-API-KEY", key);
-
+  // Auth is header-only: the key rides the X-API-KEY request header below and is
+  // never written into the URL/query string, so it cannot leak into request logs.
   const res = await throttled(() =>
-    fetch(url, { headers: { "X-API-KEY": key, Accept: "application/json" } }),
+    fetch(url, {
+      headers: { "X-API-KEY": key, Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    }),
   );
   const text = await res.text();
 
@@ -269,9 +272,22 @@ function normState(v: unknown): string {
   return s.toUpperCase();
 }
 
-/** Build a name filter that matches the term against trade_nm OR legal_name. */
+/**
+ * Escape SQL LIKE metacharacters so a user term matches literally. Backslash
+ * first (it is the escape character), then the `%` and `_` wildcards.
+ */
+function escapeLike(term: string): string {
+  return term.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+/**
+ * Build a name filter that matches the term against trade_nm OR legal_name. WHD
+ * stores names uppercase and the endpoint's LIKE is case-sensitive, so the term
+ * is uppercased defensively; LIKE metacharacters are escaped so a stray `%`/`_`
+ * in the input matches literally instead of acting as a wildcard.
+ */
 function nameFilter(term: string): FilterObject {
-  const like = `%${term}%`;
+  const like = `%${escapeLike(term.toUpperCase())}%`;
   return {
     or: [
       { field: "trade_nm", operator: "like", value: like },
@@ -453,7 +469,7 @@ async function violationsByState(args: Row): Promise<unknown> {
     { field: "st_cd", operator: "eq", value: state },
     { field: "case_violtn_cnt", operator: "gt", value: 0 },
   ];
-  if (naics) parts.push({ field: "naic_cd", operator: "like", value: `${naics}%` });
+  if (naics) parts.push({ field: "naic_cd", operator: "like", value: `${escapeLike(naics)}%` });
 
   const rows = await dolGet({
     limit,

@@ -17,7 +17,7 @@ The data is the WHISARD compliance-action dataset (every concluded WHD complianc
 
 - Base URL: `https://apiprod.dol.gov/v4`
 - Query path: `GET /get/WHD/enforcement/json` (agency `WHD`, endpoint `enforcement`, table `WHD_enforcement`)
-- Auth: a free `X-API-KEY`. The DOL docs pass it as a query parameter; this server also sends it as an `X-API-KEY` header for good measure.
+- Auth: a free `X-API-KEY`, sent only as a request header (never in the query string, so it stays out of URLs and logs).
 - Filtering: the `filter_object` query parameter takes a JSON string with `field` / `operator` / `value` (operators `eq`, `neq`, `gt`, `lt`, `in`, `not_in`, `like`), composable with `and` / `or`. Paging via `limit` / `offset`, ordering via `sort_by` / `sort`.
 - Scope: one row per concluded compliance action since FY2005.
 
@@ -46,7 +46,7 @@ Sources:
 Notes:
 - There is no single total-CMP-dollar column in WHISARD. `cmp_assd_cnt` is a count of assessments; the dollar penalties live in per-statute columns (`flsa_cmp_assd_amt`, `mspa_cmp_assd_amt`, `h1b_cmp_assd_amt`, and so on). `civil_penalties` sums those.
 - `back_wages_summary` aggregates client-side (the API does not expose a group-by), over up to `max_cases` matching rows (default 1000). If `capped` is true the totals are a floor.
-- Name search uses SQL `LIKE` on `trade_nm` and `legal_name` wrapped as `%term%`. WHD stores names largely in uppercase; if a search returns nothing, try a different casing. See the caveats below.
+- Name search uses SQL `LIKE` on `trade_nm` and `legal_name`, wrapping the term as `%term%`. The term is uppercased defensively (WHD stores names largely in uppercase) and `LIKE` metacharacters (`%`, `_`, `\`) are escaped so they match literally. See the caveats below.
 
 ## Install
 
@@ -119,7 +119,7 @@ Then pass a `case_id` to `case_detail` for the per-statute breakdown.
 The metadata endpoint is key-gated and this was built without a key, so:
 
 - The column names are checked against the published WHISARD data dictionary (table `whd_whisard`) and the dataset description, not against the live `WHD/enforcement` metadata endpoint (which requires the key). The v4 `enforcement` endpoint is the same underlying WHISARD data, so the names are expected to match, but the exact live field list is unconfirmed. The normalizer is defensive: unknown-shaped values coerce to `null` rather than throwing, and the CMP total scans every `*_cmp_assd_amt` column present.
-- `LIKE` case-sensitivity on the DOL endpoint is unconfirmed. If name searches under-return, uppercasing the term is the likely fix.
+- `LIKE` case-sensitivity on the DOL endpoint is unconfirmed, so the search term is uppercased defensively before the `%term%` wrap (WHD stores names largely in uppercase) and `LIKE` metacharacters are escaped to match literally. If name searches still under-return, casing on the endpoint is the place to look.
 - Run `npm run smoke` with a real key to confirm field names and behavior end to end before relying on output.
 
 ## Develop

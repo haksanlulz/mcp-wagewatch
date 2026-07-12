@@ -5,15 +5,10 @@
   "type": "module",
   "license": "MIT",
   "author": "Abishai James",
-  "bin": {
-    "mcp-wagewatch": "./index.ts"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haksanlulz/mcp-wagewatch.git"
   },
-  "files": [
-    "index.ts",
-    "server.ts",
-    "README.md",
-    "LICENSE"
-  ],
   "engines": {
     "node": ">=18"
   },

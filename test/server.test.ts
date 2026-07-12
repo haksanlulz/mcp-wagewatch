@@ -150,22 +150,56 @@ describe("employer_violations", () => {
     expect(c.naics_description).toBe("Poultry Processing");
   });
 
-  it("builds a trade_nm/legal_name LIKE filter and sends the API key", async () => {
+  it("builds an uppercased trade_nm/legal_name LIKE filter, sorted by back wages", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
     await call("employer_violations", { employer: "acme" });
 
     const url = lastUrl();
     expect(url.origin + url.pathname).toBe("https://apiprod.dol.gov/v4/get/WHD/enforcement/json");
-    expect(url.searchParams.get("X-API-KEY")).toBe("test-key");
     const filter = JSON.parse(url.searchParams.get("filter_object")!);
     expect(filter).toEqual({
       or: [
-        { field: "trade_nm", operator: "like", value: "%acme%" },
-        { field: "legal_name", operator: "like", value: "%acme%" },
+        { field: "trade_nm", operator: "like", value: "%ACME%" },
+        { field: "legal_name", operator: "like", value: "%ACME%" },
       ],
     });
     expect(url.searchParams.get("sort_by")).toBe("bw_atp_amt");
     expect(url.searchParams.get("sort")).toBe("desc");
+  });
+
+  it("sends the API key as a header only, never in the query string, with a timeout signal", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    await call("employer_violations", { employer: "acme" });
+
+    const lastCall = fetchMock.mock.calls.at(-1)!;
+    const url = lastCall[0] as URL;
+    const opts = lastCall[1] as any;
+    // The key rides the header, never the query string, so it cannot leak into
+    // request logs (README: "the key is never logged").
+    expect(url.searchParams.get("X-API-KEY")).toBeNull();
+    expect(opts.headers["X-API-KEY"]).toBe("test-key");
+    // Outbound requests carry an abort/timeout signal.
+    expect(opts.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("uppercases the employer term in the LIKE filter (WHD stores names uppercase)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    await call("employer_violations", { employer: "Tyson Foods" });
+
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    expect(filter.or[0].value).toBe("%TYSON FOODS%");
+    expect(filter.or[1].value).toBe("%TYSON FOODS%");
+  });
+
+  it("escapes LIKE metacharacters in the employer term so they match literally", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    // Input carries a backslash, percent, and underscore that must not act as wildcards.
+    await call("employer_violations", { employer: "a_b%c\\d" });
+
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    // Uppercased to A_B%C\D, then backslash escaped first, then % and _.
+    expect(filter.or[0].value).toBe("%A\\_B\\%C\\\\D%");
+    expect(filter.or[1].value).toBe("%A\\_B\\%C\\\\D%");
   });
 
   it("AND-combines the name filter with a state filter", async () => {
@@ -212,6 +246,16 @@ describe("employer_violations", () => {
     const res: any = await call("employer_violations", { employer: "acme" });
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain("500");
+  });
+
+  it("rejects a 200 error-object body instead of reading it as zero cases", async () => {
+    // A 200 whose body is an error envelope (no data/records/results array) must
+    // NOT read as an empty result set -- that would be a false "no wage-theft
+    // history".
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: "error", message: "quota exceeded" }));
+    const res: any = await call("employer_violations", { employer: "acme" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("unrecognized response");
   });
 });
 
