@@ -1,0 +1,47 @@
+{
+  "name": "mcp-wagewatch",
+  "version": "1.0.0",
+  "description": "MCP server over the U.S. DOL Wage and Hour Division enforcement dataset (employer wage-theft history and back wages owed) for nonprofits, legal aid, and worker-justice organizers.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Abishai James",
+  "bin": {
+    "mcp-wagewatch": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "server.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "tsx index.ts",
+    "test": "vitest run",
+    "smoke": "tsx smoke.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "dol",
+    "wage-and-hour",
+    "whisard",
+    "wage-theft",
+    "back-wages",
+    "labor",
+    "enforcement",
+    "civic-data"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
