@@ -3,7 +3,8 @@
 //
 // Data source: DOL Open Data API, dataset agency "WHD", endpoint "enforcement".
 //   Base:   https://apiprod.dol.gov/v4
-//   Query:  GET /get/WHD/enforcement/json?limit=..&offset=..&sort=..&sort_by=..&fields=..&filter_object=..&X-API-KEY=..
+//   Query:  GET /get/WHD/enforcement/json?limit=..&offset=..&sort=..&sort_by=..&fields=..&filter_object=..
+//   Auth:   X-API-KEY header (never in the query string)
 // The dataset holds every concluded WHD compliance action since FY2005: violations
 // found, back wages agreed to pay, employees affected, and civil money penalties.
 //

@@ -2,7 +2,7 @@
 
 MCP server over the U.S. Department of Labor Wage and Hour Division (WHD) enforcement dataset: employer wage-theft history, back wages owed, civil penalties, and affected-employee counts. Built for worker-justice nonprofits, legal-aid intake, and union researchers.
 
-The data is the WHISARD compliance-action dataset (every concluded WHD compliance action since FY2005) served from the DOL Open Data API. This server wraps the raw column names (`trade_nm`, `bw_atp_amt`, `ee_violtd_cnt`, ...) into clean, documented tool outputs.
+The data is the WHISARD compliance-action dataset (every concluded WHD compliance action since FY2005) served from the DOL Open Data API. This server wraps the raw column names (`trade_nm`, `bw_atp_amt`, `ee_violtd_cnt`, ...) into normalized tool outputs — field map below.
 
 ## Tools
 
@@ -67,7 +67,7 @@ export DOL_API_KEY=your-key-here      # macOS / Linux
 setx DOL_API_KEY your-key-here        # Windows (new shells)
 ```
 
-Without the key the tools return a clear error telling you to set it. The key is never logged.
+Without the key the tools return an error naming the variable and the key-signup URL. The key is never logged.
 
 ## MCP client config
 
@@ -85,9 +85,9 @@ Point your MCP client at `index.ts` via tsx. Use an absolute path.
 }
 ```
 
-## Example
+## Response shape
 
-Call `employer_violations` with `{ "employer": "tyson", "state": "AR", "limit": 1 }`:
+`employer_violations` with `{ "employer": "tyson", "state": "AR", "limit": 1 }` returns this shape. Values are illustrative (test-fixture data, not a live capture — see the caveats below):
 
 ```json
 {
@@ -129,6 +129,10 @@ npm test         # vitest, fetch mocked with the documented response shapes (no 
 npm run smoke    # one live call per tool (needs DOL_API_KEY; skips cleanly without)
 npm run typecheck
 ```
+
+## AI assistance
+
+This project was built with AI assistance (Claude). Correctness was established by the mocked vitest suite (a real MCP client/server pair over an in-memory transport, fetch stubbed with the documented DOL response shapes) plus `npm run typecheck` — not by live API calls; the caveats above scope what stays unconfirmed until `npm run smoke` runs with a real key. The author reviewed the code and is accountable for it.
 
 ## License
 
