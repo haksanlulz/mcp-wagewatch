@@ -111,9 +111,18 @@ Without the key the tools return an error naming the variable and the key-signup
       "employees_affected": 88,
       "violations": 12
     }
-  ]
+  ],
+  "data_currency": {
+    "newest_findings_end_date": "2022-01-01",
+    "note": "WHD publishes concluded investigations on a lag. These are historical enforcement records, not an employer's present compliance state, and an empty result means no concluded published case was found — not that none exists."
+  }
 }
 ```
+
+`data_currency` is attached to **every** response and is computed from the rows
+actually returned, never from the clock: an answer is exactly as current as its
+newest record. When a result set carries no dates,
+`newest_findings_end_date` is `null` rather than absent.
 
 Then pass a `case_id` to `case_detail` for the per-statute breakdown.
 

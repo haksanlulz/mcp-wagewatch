@@ -521,6 +521,55 @@ const HANDLERS: Record<string, (args: Row) => Promise<unknown>> = {
 // Server factory
 // ---------------------------------------------------------------------------
 
+/**
+ * SPEC vintage-on-every-answer.
+ *
+ * WHD publishes CONCLUDED investigations, and it publishes them late. Two
+ * distinct ways a reader gets burned, and the note has to cover both:
+ *   - a 2019 case read as "this employer is violating right now";
+ *   - an empty result read as "this employer is clean", when the real meaning
+ *     is "WHD has not published a concluded investigation naming them".
+ *
+ * The vintage is computed from the records actually returned, never from the
+ * clock. An answer is exactly as current as its newest row and no more; a
+ * generated-on timestamp would assert the opposite and is the bug itself.
+ */
+const CURRENCY_NOTE =
+  "WHD publishes concluded investigations on a lag. These are historical " +
+  "enforcement records, not an employer's present compliance state, and an " +
+  "empty result means no concluded published case was found — not that none exists.";
+
+/** Deepest-first scan for findings_end_date, so every result shape is covered. */
+function newestFindingsDate(node: unknown): string | null {
+  if (Array.isArray(node)) {
+    return node.reduce<string | null>((max, item) => {
+      const found = newestFindingsDate(item);
+      return found !== null && (max === null || found > max) ? found : max;
+    }, null);
+  }
+  if (node === null || typeof node !== "object") return null;
+  let max: string | null = null;
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    // ISO-8601 sorts lexicographically, so string compare IS date compare.
+    const found =
+      key === "findings_end_date" && typeof value === "string" && value !== ""
+        ? value
+        : newestFindingsDate(value);
+    if (found !== null && (max === null || found > max)) max = found;
+  }
+  return max;
+}
+
+function withDataCurrency(result: unknown): unknown {
+  const currency = {
+    newest_findings_end_date: newestFindingsDate(result),
+    note: CURRENCY_NOTE,
+  };
+  if (result === null || typeof result !== "object") return { result, data_currency: currency };
+  if (Array.isArray(result)) return { results: result, data_currency: currency };
+  return { ...(result as Record<string, unknown>), data_currency: currency };
+}
+
 export function createServer(): Server {
   const server = new Server(
     { name: "mcp-wagewatch", version: "1.0.0" },
@@ -537,7 +586,7 @@ export function createServer(): Server {
     }
     try {
       const result = await handler((args ?? {}) as Row);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: "text", text: JSON.stringify(withDataCurrency(result), null, 2) }] };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {

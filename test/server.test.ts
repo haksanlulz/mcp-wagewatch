@@ -346,3 +346,36 @@ describe("unknown tool", () => {
     await expect(call("does_not_exist", {})).rejects.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC vintage-on-every-answer — operator-authored 2026-07-29
+// ---------------------------------------------------------------------------
+
+describe("SPEC vintage-on-every-answer", () => {
+  // spec: vintage-on-every-answer
+  // Given WHD enforcement data, which lags and records CONCLUDED investigations
+  // When any tool returns a result
+  // Then the result states how current the data is, so a reader cannot mistake
+  //      a closed historical case for an employer's present state.
+  // Operator's stated worst failure for this server: "stale data presented as current."
+  it("every successful result states its data currency", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
+    const body = payload(await call("employer_violations", { employer: "Tyson" }));
+    expect(body).toHaveProperty("data_currency");
+    expect(String(body.data_currency.note).toLowerCase()).toContain("concluded");
+  });
+
+  it("reports the newest findings date actually present, not today", async () => {
+    // ROW_TYSON ends 2022-01-01, ROW_SMALL ends 2019-12-01. The answer is only
+    // as current as its newest record — saying otherwise is the whole failure.
+    fetchMock.mockResolvedValue(jsonResponse({ data: [ROW_SMALL, ROW_TYSON] }));
+    const body = payload(await call("employer_violations", { employer: "x" }));
+    expect(body.data_currency.newest_findings_end_date).toBe("2022-01-01");
+  });
+
+  it("says so plainly when a result set carries no dates at all", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [] }));
+    const body = payload(await call("employer_violations", { employer: "nobody" }));
+    expect(body.data_currency.newest_findings_end_date).toBeNull();
+  });
+});

@@ -16,8 +16,14 @@ precedent: `mcp-scryfall/GAUNTLET.md`.
   identifies itself.
 - **Non-goals**: predicting enforcement outcomes, naming individuals, any claim about a current employer relationship.
 
-⚠️ **§1 is transcribed from the README, not elicited from the operator.** Treat
-the clauses above as inferred until he ratifies or rewrites them.
+- **MUST NEVER** (operator, 2026-07-29): *"Stale data presented as current."* WHD
+  publishes concluded investigations, late. A 2019 case is not an employer's
+  present compliance state, and an empty result is not a clean record. Every
+  answer is exactly as current as its newest row and must say so. Locked by SPEC
+  `vintage-on-every-answer`.
+
+⚠️ The three bullets above the MUST NEVER line are still transcribed from the
+README rather than elicited; the MUST NEVER clause is operator-authored.
 
 ## §2 Channel map
 
@@ -41,6 +47,7 @@ the clauses above as inferred until he ratifies or rewrites them.
 | Every request identifies itself to DOL | vitest asserts `User-Agent` matches `^mcp-wagewatch/\d` | ✅ **added 2026-07-29, mutation-probed red** |
 | Token never enters the query string | vitest asserts header-only auth | ✅ present |
 | Published tarball ships no tests/tooling | `files` whitelist + `npm pack --dry-run` | ✅ **added 2026-07-29** — `files: ["dist"]`; `verify:pack` fails if any source, test or tsconfig appears in the tarball |
+| Every answer states its vintage (SPEC `vintage-on-every-answer`) | vitest ×3 — the note, newest-date across a mixed set, and the no-dates case; computed from rows, never the clock | ✅ **added 2026-07-29**, written RED first |
 
 ## §4 Ladder
 
@@ -58,8 +65,25 @@ The npm channel itself is covered by `verify:pack`, which CI runs on every push.
 
 ## §5 Acceptance specs
 
-*(Operator-owned. None authored yet — this section is deliberately empty rather
-than seeded with my guesses. The §1 clauses above are the natural first three.)*
+### SPEC vintage-on-every-answer
+```
+Given WHD enforcement data, which lags and records concluded investigations
+When any tool returns a result
+Then the result reports the newest findings date actually present in it
+```
+Computed from the returned rows, **never from the clock**. A generated-on
+timestamp would assert the opposite of the truth and is itself the bug: it
+would stamp "today" on a 2019 record. The empty case reports `null` rather
+than omitting the field, because an answer with no dates is the one most
+likely to be read as current.
+
+Check: `test/server.test.ts` (tagged `spec: vintage-on-every-answer`), three
+cases — the note, the newest-date computation across a mixed set, and the
+no-dates case.
+**Red-capable:** written RED first; all three failed before `withDataCurrency`
+existed (2026-07-29).
+
+*Slots 2 and 3 are open and operator-owned.*
 
 ## §6 Escape log
 
@@ -101,8 +125,10 @@ to return a negative is not evidence** (workspace Audit Discipline Rules 22/23).
 1. **README-as-artifact.** It is what LobeHub and Glama render, and it still documents the
    old clone-and-point-tsx-at-it install. Nothing checks the documented path executes, and
    the published package now supports a shorter one. **Highest-value remaining item.**
-2. **§5 is empty** — no operator-authored acceptance specs anywhere in the set. §1 is also
-   transcribed rather than elicited, so both operator-owned sections are unratified.
+2. **§5 holds one spec of a planned three** — the operator's stated MUST-NEVER for this
+   server is authored, implemented and linked (2026-07-29). Slots 2 and 3 are open. §1's
+   descriptive bullets are still transcribed from the README rather than elicited; only the
+   MUST NEVER clause is in his words.
 3. **vitest version drift** — fairrent 2.1.9, the siblings 4.1.10, for no recorded reason.
 4. **`smoke` is in-memory, not stdio.** `verify:pack` now covers the real-stdio channel, so
    smoke's remaining job is the live upstream contract. Its name oversells it.
