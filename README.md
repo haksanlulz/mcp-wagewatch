@@ -50,13 +50,32 @@ Notes:
 
 ## Install
 
-No build step. Runs directly on [tsx](https://github.com/privatenumber/tsx).
+Nothing to clone. Point your MCP client at it and npm fetches it on first run:
 
+```json
+{
+  "mcpServers": {
+    "wagewatch": {
+      "command": "npx",
+      "args": ["-y", "@haksanlulz/mcp-wagewatch"],
+      "env": { "DOL_API_KEY": "your-dol-key" }
+    }
+  }
+}
 ```
-git clone https://github.com/haksanlulz/mcp-wagewatch.git
+
+<details>
+<summary>From source (contributors)</summary>
+
+```bash
+git clone https://github.com/haksanlulz/mcp-wagewatch
 cd mcp-wagewatch
 npm install
+npm run build     # emits dist/; the published bin is dist/index.js
 ```
+
+`npm start` runs the TypeScript directly via [`tsx`](https://github.com/privatenumber/tsx) without building.
+</details>
 
 ## API key
 
@@ -68,22 +87,6 @@ setx DOL_API_KEY your-key-here        # Windows (new shells)
 ```
 
 Without the key the tools return an error naming the variable and the key-signup URL. The key is never logged.
-
-## MCP client config
-
-Point your MCP client at `index.ts` via tsx. Use an absolute path.
-
-```json
-{
-  "mcpServers": {
-    "wagewatch": {
-      "command": "npx",
-      "args": ["tsx", "/absolute/path/to/mcp-wagewatch/index.ts"],
-      "env": { "DOL_API_KEY": "your-key-here" }
-    }
-  }
-}
-```
 
 ## Response shape
 
