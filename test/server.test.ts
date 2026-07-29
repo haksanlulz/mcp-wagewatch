@@ -180,6 +180,11 @@ describe("employer_violations", () => {
     expect(opts.headers["X-API-KEY"]).toBe("test-key");
     // Outbound requests carry an abort/timeout signal.
     expect(opts.signal).toBeInstanceOf(AbortSignal);
+    // DOL Open Data is a free public service: identify ourselves on every call,
+    // the same contract the sibling civic servers honour. Asserted because a
+    // missing UA is invisible to every other test in this file — it shipped
+    // that way until 2026-07-29.
+    expect(opts.headers["User-Agent"]).toMatch(/^mcp-wagewatch\/\d/);
   });
 
   it("uppercases the employer term in the LIKE filter (WHD stores names uppercase)", async () => {

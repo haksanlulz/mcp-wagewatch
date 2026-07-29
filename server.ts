@@ -30,6 +30,8 @@ const WHD_AGENCY = "WHD";
 const WHD_ENDPOINT = "enforcement";
 /** Where to get a free DOL Open Data API key. */
 const KEY_SIGNUP_URL = "https://dataportal.dol.gov/registration";
+/** Descriptive User-Agent (DOL Open Data is a free public service; be identifiable). */
+const UA = "mcp-wagewatch/1.0 (+https://github.com/haksanlulz/mcp-wagewatch)";
 /** Minimum spacing between outbound API calls (polite throttle). */
 const THROTTLE_MS = 150;
 /** DOL API hard ceiling is 10,000 records / 5MB per request; we stay well under. */
@@ -146,7 +148,7 @@ async function dolGet(params: QueryParams): Promise<Row[]> {
   // never written into the URL/query string, so it cannot leak into request logs.
   const res = await throttled(() =>
     fetch(url, {
-      headers: { "X-API-KEY": key, Accept: "application/json" },
+      headers: { "X-API-KEY": key, Accept: "application/json", "User-Agent": UA },
       signal: AbortSignal.timeout(15_000),
     }),
   );
