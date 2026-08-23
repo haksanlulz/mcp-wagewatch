@@ -171,6 +171,12 @@ async function dolGet(params: QueryParams): Promise<Row[]> {
   );
   const text = await res.text();
 
+  // DOL answers HTTP 204 WITH AN EMPTY BODY for a zero-match filter (verified
+  // live 2026-08-23: three shapes all 204/len=0). That is the single most
+  // load-bearing answer this dataset gives — "no concluded case found" — and
+  // an empty body must parse as an empty result set, not die as non-JSON.
+  if (res.status === 204 || (res.ok && text.trim() === "")) return [];
+
   if (!res.ok) {
     throw new Error(`DOL API request failed (HTTP ${res.status}): ${text.slice(0, 300).trim()}`);
   }

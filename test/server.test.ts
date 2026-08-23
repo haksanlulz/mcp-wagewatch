@@ -388,6 +388,15 @@ describe("SPEC vintage-on-every-answer", () => {
 // ---------------------------------------------------------------------------
 
 describe("wagewatch 1.1.0", () => {
+  it("a 204 empty body is a zero-match answer, not an error (live DOL contract)", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 204, text: async () => "" });
+    const body = payload(await call("employer_violations", { employer: "zzqx nonexistent llc" }));
+    expect(body.count).toBe(0);
+    expect(body.has_more).toBe(false);
+    // The absence-is-not-clean framing must ride the empty answer especially.
+    expect(String(body.data_currency?.note)).toContain("empty result");
+  });
+
   it("employer_violations requests limit+1 and reports has_more when truncated", async () => {
     // 21 rows come back for a limit of 20: exactly the case the audit flagged
     // as indistinguishable from a complete answer.
