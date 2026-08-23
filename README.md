@@ -125,10 +125,7 @@ Without the key the tools return an error naming the variable and the key-signup
 }
 ```
 
-`data_currency` is attached to **every** response and is computed from the rows
-actually returned, never from the clock: an answer is exactly as current as its
-newest record. When a result set carries no dates,
-`newest_findings_end_date` is `null` rather than absent.
+`data_currency` is attached to **every** response and is computed from the rows actually returned, never from the clock: an answer is exactly as current as its newest record. When a result set carries no dates, `newest_findings_end_date` is `null` rather than absent.
 
 Then pass a `case_id` to `case_detail` for the per-statute breakdown.
 
