@@ -8,10 +8,12 @@ The data is the WHISARD compliance-action dataset (every concluded WHD complianc
 
 | Tool | Arguments | Returns |
 |------|-----------|---------|
-| `employer_violations` | `employer` (required), `state`, `limit` | Enforcement cases matching the employer name, largest back wages first. Per case: employer, location, findings dates, back wages, civil penalties, employees affected, violation count. |
+| `employer_violations` | `employer` (required), `state`, `found_after`, `found_before`, `limit` | Enforcement cases matching the employer name, largest back wages first. Per case: employer, location, findings dates, back wages, civil penalties, employees affected, violation count. |
 | `back_wages_summary` | `employer` and/or `state` (at least one), `max_cases` | Aggregate totals across matching cases: total back wages, total employees affected, total civil penalties, case count, findings date range. |
-| `violations_by_state` | `state` (required), `naics`, `limit` | Top cases in a state where a violation was found, ordered by back wages. Optional NAICS-prefix industry filter. |
+| `violations_by_state` | `state` (required), `naics`, `found_after`, `found_before`, `limit` | Top cases in a state where a violation was found, ordered by back wages. Optional NAICS-prefix industry filter. |
 | `case_detail` | `case_id` (required) | Full record for one case, including the per-statute breakdown (which laws were cited: FLSA, MSPA, H-1B, FMLA, Davis-Bacon, child labor, and so on). |
+| `top_cases` | `state`, `naics`, `found_after`, `found_before`, `limit` (all optional) | The largest cases by back wages nationally, in a state, and/or in a date window — no employer name needed. |
+| `flagged_employers` | `state`, `flag` (default `R`), `limit` | Cases carrying the WHD repeat/willful violator flag (its data dictionary publishes R / W / RW). WHD characterization, not a court finding. |
 
 ## Data source
 

@@ -63,6 +63,17 @@ async function main(): Promise<void> {
     console.log(`     -> case ${sampleCaseId} found=${body.found}; statutes: ${(body.statute_breakdown ?? []).map((s: any) => s.statute).join(", ") || "(none)"}`);
   });
 
+  await run("top_cases", async () => {
+    const body = parse(await client.callTool({ name: "top_cases", arguments: { state: "NY", limit: 3 } }));
+    console.log(`     -> ${body.count} case(s), has_more=${body.has_more}; biggest: ${body.cases[0]?.employer ?? "(none)"} $${body.cases[0]?.back_wages ?? "?"}`);
+    if (typeof body.has_more !== "boolean") throw new Error("expected a has_more flag");
+  });
+
+  await run("flagged_employers", async () => {
+    const body = parse(await client.callTool({ name: "flagged_employers", arguments: { state: "NY", limit: 3 } }));
+    console.log(`     -> ${body.count} flagged case(s), has_more=${body.has_more}; first: ${body.cases[0]?.employer ?? "(none)"}`);
+  });
+
   await client.close();
   await server.close();
 

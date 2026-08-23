@@ -275,6 +275,16 @@ function normState(v: unknown): string {
   return s.toUpperCase();
 }
 
+/** Validate an optional ISO date (YYYY-MM-DD), or throw. */
+function normDate(v: unknown, label: string): string | undefined {
+  const s = str(v);
+  if (!s) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw new Error(`${label} must be an ISO date (YYYY-MM-DD); got: ${JSON.stringify(v)}`);
+  }
+  return s;
+}
+
 /**
  * Escape SQL LIKE metacharacters so a user term matches literally. Backslash
  * first (it is the escape character), then the `%` and `_` wildcards.
@@ -319,6 +329,8 @@ const TOOLS: Tool[] = [
           type: "string",
           description: "Optional 2-letter state code to filter by (e.g. \"NY\").",
         },
+        found_after: { type: "string", description: "Only cases whose findings ended on/after this ISO date (YYYY-MM-DD)." },
+        found_before: { type: "string", description: "Only cases whose findings ended on/before this ISO date (YYYY-MM-DD)." },
         limit: {
           type: "integer",
           description: `Max cases to return (1-${MAX_PAGE}, default 20).`,
@@ -358,9 +370,45 @@ const TOOLS: Tool[] = [
           type: "string",
           description: "Optional NAICS code prefix to filter industry (e.g. \"72\", \"722511\").",
         },
+        found_after: { type: "string", description: "Only cases whose findings ended on/after this ISO date (YYYY-MM-DD)." },
+        found_before: { type: "string", description: "Only cases whose findings ended on/before this ISO date (YYYY-MM-DD)." },
         limit: { type: "integer", description: `Max cases to return (1-${MAX_PAGE}, default 20).` },
       },
       required: ["state"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "top_cases",
+    description:
+      "The largest WHD enforcement cases by back wages — nationally, in a state, and/or in a date " +
+      "window. No employer name needed: use it to see what wage enforcement looks like in an " +
+      "industry or region, or to find the biggest recent actions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        state: { type: "string", description: 'Optional 2-letter state code (e.g. "NY").' },
+        naics: { type: "string", description: 'Optional NAICS code prefix (e.g. "72" for accommodation and food services).' },
+        found_after: { type: "string", description: "Only cases whose findings ended on/after this ISO date (YYYY-MM-DD)." },
+        found_before: { type: "string", description: "Only cases whose findings ended on/before this ISO date (YYYY-MM-DD)." },
+        limit: { type: "integer", description: `Max cases to return (1-${MAX_PAGE}, default 20).` },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "flagged_employers",
+    description:
+      "WHD cases carrying the dataset's FLSA repeat/willful violator flag, optionally in a state. " +
+      "The flag values are WHD's own (per its data dictionary: R = repeat, W = willful, RW = both); " +
+      "pass a different flag value to search another. Ordered by back wages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        state: { type: "string", description: 'Optional 2-letter state code.' },
+        flag: { type: "string", description: 'Flag value to match exactly (default "R"). WHD publishes R / W / RW.' },
+        limit: { type: "integer", description: `Max cases to return (1-${MAX_PAGE}, default 20).` },
+      },
       additionalProperties: false,
     },
   },
@@ -386,20 +434,96 @@ const TOOLS: Tool[] = [
 // Tool handlers
 // ---------------------------------------------------------------------------
 
+/** Optional findings_end_date range conditions from found_after / found_before. */
+function dateFilters(args: Row): FilterObject[] {
+  const out: FilterObject[] = [];
+  const after = normDate(args.found_after, "found_after");
+  const before = normDate(args.found_before, "found_before");
+  if (after) out.push({ field: "findings_end_date", operator: "gt", value: after });
+  if (before) out.push({ field: "findings_end_date", operator: "lt", value: before });
+  return out;
+}
+
+/** Combine filter parts into one FilterObject (1 part passes through bare). */
+function andAll(parts: FilterObject[]): FilterObject {
+  return parts.length === 1 ? parts[0] : { and: parts };
+}
+
+/**
+ * Fetch one page of `limit` rows plus a probe row: requesting limit+1 and
+ * showing limit makes truncation VISIBLE (has_more) without a second count
+ * request. The audit found these list tools returning exactly `limit` rows
+ * indistinguishable from a complete answer.
+ */
+async function pageWithProbe(params: Omit<QueryParams, "limit">, limit: number): Promise<{ rows: Row[]; hasMore: boolean }> {
+  const rows = await dolGet({ ...params, limit: limit + 1 });
+  return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
+}
+
 async function employerViolations(args: Row): Promise<unknown> {
   const employer = str(args.employer);
   if (!employer) throw new Error("employer is required.");
   const limit = clampLimit(args.limit, 20);
 
-  const name = nameFilter(employer);
-  const filter: FilterObject = args.state
-    ? { and: [name, { field: "st_cd", operator: "eq", value: normState(args.state) }] }
-    : name;
+  const parts: FilterObject[] = [nameFilter(employer)];
+  if (args.state) parts.push({ field: "st_cd", operator: "eq", value: normState(args.state) });
+  parts.push(...dateFilters(args));
 
-  const rows = await dolGet({ limit, filter, sort_by: "bw_atp_amt", sort: "desc" });
+  const { rows, hasMore } = await pageWithProbe({ filter: andAll(parts), sort_by: "bw_atp_amt", sort: "desc" }, limit);
   return {
-    query: { employer, state: args.state ? normState(args.state) : null },
+    query: {
+      employer,
+      state: args.state ? normState(args.state) : null,
+      found_after: str(args.found_after) ?? null,
+      found_before: str(args.found_before) ?? null,
+    },
     count: rows.length,
+    has_more: hasMore,
+    note: hasMore ? `More cases match than the ${limit} shown (largest back wages first); raise limit or narrow the query.` : undefined,
+    cases: rows.map(normalizeCase),
+  };
+}
+
+async function topCases(args: Row): Promise<unknown> {
+  const state = args.state != null && args.state !== "" ? normState(args.state) : null;
+  const naics = str(args.naics);
+  const limit = clampLimit(args.limit, 20);
+
+  const parts: FilterObject[] = [{ field: "case_violtn_cnt", operator: "gt", value: 0 }];
+  if (state) parts.push({ field: "st_cd", operator: "eq", value: state });
+  if (naics) parts.push({ field: "naic_cd", operator: "like", value: `${escapeLike(naics)}%` });
+  parts.push(...dateFilters(args));
+
+  const { rows, hasMore } = await pageWithProbe({ filter: andAll(parts), sort_by: "bw_atp_amt", sort: "desc" }, limit);
+  return {
+    query: {
+      state,
+      naics: naics ?? null,
+      found_after: str(args.found_after) ?? null,
+      found_before: str(args.found_before) ?? null,
+    },
+    count: rows.length,
+    has_more: hasMore,
+    cases: rows.map(normalizeCase),
+  };
+}
+
+async function flaggedEmployers(args: Row): Promise<unknown> {
+  const state = args.state != null && args.state !== "" ? normState(args.state) : null;
+  const flag = str(args.flag) ?? "R";
+  const limit = clampLimit(args.limit, 20);
+
+  const parts: FilterObject[] = [{ field: "flsa_repeat_violator", operator: "eq", value: flag }];
+  if (state) parts.push({ field: "st_cd", operator: "eq", value: state });
+
+  const { rows, hasMore } = await pageWithProbe({ filter: andAll(parts), sort_by: "bw_atp_amt", sort: "desc" }, limit);
+  return {
+    query: { state, flag },
+    count: rows.length,
+    has_more: hasMore,
+    note:
+      "flsa_repeat_violator is WHD's own flag (its data dictionary publishes R = repeat, W = willful, " +
+      "RW = both). The flag reflects WHD's characterization at case conclusion, not a court finding.",
     cases: rows.map(normalizeCase),
   };
 }
@@ -473,16 +597,19 @@ async function violationsByState(args: Row): Promise<unknown> {
     { field: "case_violtn_cnt", operator: "gt", value: 0 },
   ];
   if (naics) parts.push({ field: "naic_cd", operator: "like", value: `${escapeLike(naics)}%` });
+  parts.push(...dateFilters(args));
 
-  const rows = await dolGet({
-    limit,
-    filter: { and: parts },
-    sort_by: "bw_atp_amt",
-    sort: "desc",
-  });
+  const { rows, hasMore } = await pageWithProbe({ filter: { and: parts }, sort_by: "bw_atp_amt", sort: "desc" }, limit);
   return {
-    query: { state, naics: naics ?? null },
+    query: {
+      state,
+      naics: naics ?? null,
+      found_after: str(args.found_after) ?? null,
+      found_before: str(args.found_before) ?? null,
+    },
     count: rows.length,
+    has_more: hasMore,
+    note: hasMore ? `More cases match than the ${limit} shown (largest back wages first); raise limit or narrow the query.` : undefined,
     cases: rows.map(normalizeCase),
   };
 }
@@ -514,6 +641,8 @@ const HANDLERS: Record<string, (args: Row) => Promise<unknown>> = {
   employer_violations: employerViolations,
   back_wages_summary: backWagesSummary,
   violations_by_state: violationsByState,
+  top_cases: topCases,
+  flagged_employers: flaggedEmployers,
   case_detail: caseDetail,
 };
 
@@ -572,7 +701,7 @@ function withDataCurrency(result: unknown): unknown {
 
 export function createServer(): Server {
   const server = new Server(
-    { name: "mcp-wagewatch", version: "1.0.0" },
+    { name: "mcp-wagewatch", version: "1.1.0" },
     { capabilities: { tools: {} } },
   );
 

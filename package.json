@@ -1,6 +1,6 @@
 {
   "name": "@haksanlulz/mcp-wagewatch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server over the U.S. DOL Wage and Hour Division enforcement dataset (employer wage-theft history and back wages owed) for nonprofits, legal aid, and worker-justice organizers.",
   "type": "module",
   "license": "MIT",

@@ -119,6 +119,8 @@ describe("tool registration", () => {
       "back_wages_summary",
       "case_detail",
       "employer_violations",
+      "flagged_employers",
+      "top_cases",
       "violations_by_state",
     ]);
     for (const t of tools) {
@@ -219,7 +221,7 @@ describe("employer_violations", () => {
   it("clamps limit to the page ceiling", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
     await call("employer_violations", { employer: "acme", limit: 99999 });
-    expect(lastUrl().searchParams.get("limit")).toBe("100");
+    expect(lastUrl().searchParams.get("limit")).toBe("101"); // clamped 100 + the has_more probe row
   });
 
   it("returns isError when DOL_API_KEY is missing", async () => {
@@ -377,5 +379,67 @@ describe("SPEC vintage-on-every-answer", () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: [] }));
     const body = payload(await call("employer_violations", { employer: "nobody" }));
     expect(body.data_currency.newest_findings_end_date).toBeNull();
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 1.1.0: top_cases, flagged_employers, date filters, visible truncation
+// ---------------------------------------------------------------------------
+
+describe("wagewatch 1.1.0", () => {
+  it("employer_violations requests limit+1 and reports has_more when truncated", async () => {
+    // 21 rows come back for a limit of 20: exactly the case the audit flagged
+    // as indistinguishable from a complete answer.
+    const rows = Array.from({ length: 21 }, (_, i) => ({ case_id: String(i + 1), trade_nm: "ACME", bw_atp_amt: "100" }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(rows));
+    const body = payload(await call("employer_violations", { employer: "acme", limit: 20 }));
+    const url = lastUrl();
+    expect(url.searchParams.get("limit")).toBe("21"); // the probe row
+    expect(body.count).toBe(20);
+    expect(body.has_more).toBe(true);
+    expect(String(body.note)).toContain("More cases match");
+  });
+
+  it("a complete answer reports has_more false and carries no truncation note", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([{ case_id: "1", trade_nm: "ACME", bw_atp_amt: "100" }]));
+    const body = payload(await call("employer_violations", { employer: "acme", limit: 20 }));
+    expect(body.has_more).toBe(false);
+    expect(body.note).toBeUndefined();
+  });
+
+  it("date filters ride findings_end_date as gt/lt filter nodes", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("violations_by_state", { state: "NY", found_after: "2024-01-01", found_before: "2026-01-01" });
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    const nodes = filter.and;
+    expect(nodes).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2024-01-01" });
+    expect(nodes).toContainEqual({ field: "findings_end_date", operator: "lt", value: "2026-01-01" });
+  });
+
+  it("a malformed date is rejected before any network call", async () => {
+    const res: any = await call("top_cases", { found_after: "January 2024" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("YYYY-MM-DD");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("top_cases works with no filters at all (national biggest cases)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([{ case_id: "9", trade_nm: "BIG CO", bw_atp_amt: "5000000" }]));
+    const body = payload(await call("top_cases", {}));
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    // Bare violation-count condition, no state/naics nodes.
+    expect(filter).toEqual({ field: "case_violtn_cnt", operator: "gt", value: 0 });
+    expect(lastUrl().searchParams.get("sort_by")).toBe("bw_atp_amt");
+    expect(body.cases[0].employer).toBe("BIG CO");
+  });
+
+  it("flagged_employers filters on the WHD flag and says it is not a court finding", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([{ case_id: "3", trade_nm: "REPEAT CO", flsa_repeat_violator: "R", bw_atp_amt: "900" }]));
+    const body = payload(await call("flagged_employers", { state: "NY" }));
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    expect(filter.and).toContainEqual({ field: "flsa_repeat_violator", operator: "eq", value: "R" });
+    expect(String(body.note)).toContain("not a court finding");
+    expect(body).toHaveProperty("data_currency");
   });
 });
