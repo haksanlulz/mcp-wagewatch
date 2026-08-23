@@ -169,7 +169,7 @@ describe("employer_violations", () => {
     expect(url.searchParams.get("sort")).toBe("desc");
   });
 
-  it("sends the API key as a header only, never in the query string, with a timeout signal", async () => {
+  it("sends the API key as a query parameter (the v4 API rejects the header form), with a timeout signal", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
     await call("employer_violations", { employer: "acme" });
 
@@ -178,8 +178,8 @@ describe("employer_violations", () => {
     const opts = lastCall[1] as any;
     // The key rides the header, never the query string, so it cannot leak into
     // request logs (README: "the key is never logged").
-    expect(url.searchParams.get("X-API-KEY")).toBeNull();
-    expect(opts.headers["X-API-KEY"]).toBe("test-key");
+    expect(url.searchParams.get("X-API-KEY")).toBe("test-key"); // query param: the header form 401s live
+    expect(opts.headers["X-API-KEY"]).toBeUndefined();
     // Outbound requests carry an abort/timeout signal.
     expect(opts.signal).toBeInstanceOf(AbortSignal);
     // DOL Open Data is a free public service: identify ourselves on every call,
@@ -294,7 +294,7 @@ describe("violations_by_state", () => {
 
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
     expect(filter.and).toContainEqual({ field: "st_cd", operator: "eq", value: "AR" });
-    expect(filter.and).toContainEqual({ field: "case_violtn_cnt", operator: "gt", value: 0 });
+    expect(filter.and).toContainEqual({ field: "case_violtn_cnt", operator: "gt", value: "0" });
     expect(lastUrl().searchParams.get("sort_by")).toBe("bw_atp_amt");
     expect(body.count).toBe(1);
   });
@@ -330,9 +330,9 @@ describe("case_detail", () => {
     const flsa = body.statute_breakdown.find((s: any) => s.statute === "FLSA");
     expect(flsa.back_wages).toBe(120000.5);
 
-    // case_id is sent as a numeric eq filter.
+    // case_id serializes as a STRING eq filter: DOL 500s on numeric values.
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
-    expect(filter).toEqual({ field: "case_id", operator: "eq", value: 1234567 });
+    expect(filter).toEqual({ field: "case_id", operator: "eq", value: "1234567" });
   });
 
   it("reports found=false when no case matches", async () => {
@@ -429,7 +429,7 @@ describe("wagewatch 1.1.0", () => {
     const body = payload(await call("top_cases", {}));
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
     // Bare violation-count condition, no state/naics nodes.
-    expect(filter).toEqual({ field: "case_violtn_cnt", operator: "gt", value: 0 });
+    expect(filter).toEqual({ field: "case_violtn_cnt", operator: "gt", value: "0" }); // DOL 500s on numeric filter values
     expect(lastUrl().searchParams.get("sort_by")).toBe("bw_atp_amt");
     expect(body.cases[0].employer).toBe("BIG CO");
   });

@@ -4,7 +4,7 @@
 // Data source: DOL Open Data API, dataset agency "WHD", endpoint "enforcement".
 //   Base:   https://apiprod.dol.gov/v4
 //   Query:  GET /get/WHD/enforcement/json?limit=..&offset=..&sort=..&sort_by=..&fields=..&filter_object=..
-//   Auth:   X-API-KEY header (never in the query string)
+//   Auth:   X-API-KEY as a QUERY PARAMETER (the v4 API 401s the header form)
 // The dataset holds every concluded WHD compliance action since FY2005: violations
 // found, back wages agreed to pay, employees affected, and civil money penalties.
 //
@@ -134,6 +134,18 @@ function extractRows(json: unknown): Row[] {
   return [];
 }
 
+/**
+ * DOL's filter engine 500s on numeric JSON values ("There was a server error
+ * querying the dataset") and only accepts strings — verified live 2026-08-23
+ * with {value: 0} failing and {value: "0"} succeeding. Coerce every leaf
+ * value at serialization time so no call site can reintroduce the bug.
+ */
+function stringifyFilterValues(node: FilterObject): FilterObject {
+  if ("and" in node) return { and: node.and.map(stringifyFilterValues) };
+  if ("or" in node) return { or: node.or.map(stringifyFilterValues) };
+  return { ...node, value: Array.isArray(node.value) ? node.value.map(String) : String(node.value) };
+}
+
 /** Execute one GET against the WHD/enforcement endpoint and return raw rows. */
 async function dolGet(params: QueryParams): Promise<Row[]> {
   const key = apiKey();
@@ -143,12 +155,17 @@ async function dolGet(params: QueryParams): Promise<Row[]> {
   if (params.sort) url.searchParams.set("sort", params.sort);
   if (params.sort_by) url.searchParams.set("sort_by", params.sort_by);
   if (params.fields?.length) url.searchParams.set("fields", params.fields.join(","));
-  if (params.filter) url.searchParams.set("filter_object", JSON.stringify(params.filter));
-  // Auth is header-only: the key rides the X-API-KEY request header below and is
-  // never written into the URL/query string, so it cannot leak into request logs.
+  if (params.filter) url.searchParams.set("filter_object", JSON.stringify(stringifyFilterValues(params.filter)));
+  // Auth: the DOL v4 API accepts the key ONLY as a query parameter — the
+  // X-API-KEY header form answers 401 (verified live 2026-08-23; this code
+  // originally assumed header-only auth for log hygiene, and the live rung
+  // proved the API rejects it). Consequence to know about: the key rides the
+  // URL, so anything that logs full request URLs sees it. Error messages from
+  // this module never include the URL.
+  url.searchParams.set("X-API-KEY", key);
   const res = await throttled(() =>
     fetch(url, {
-      headers: { "X-API-KEY": key, Accept: "application/json", "User-Agent": UA },
+      headers: { Accept: "application/json", "User-Agent": UA },
       signal: AbortSignal.timeout(15_000),
     }),
   );

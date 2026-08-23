@@ -19,7 +19,7 @@ The data is the WHISARD compliance-action dataset (every concluded WHD complianc
 
 - Base URL: `https://apiprod.dol.gov/v4`
 - Query path: `GET /get/WHD/enforcement/json` (agency `WHD`, endpoint `enforcement`, table `WHD_enforcement`)
-- Auth: a free `X-API-KEY`, sent only as a request header (never in the query string, so it stays out of URLs and logs).
+- Auth: a free `X-API-KEY`. The v4 API accepts it ONLY as a query parameter (the header form answers 401 — verified live), so the key rides the URL; be aware of that anywhere full request URLs are logged. This server's error messages never include the URL.
 - Filtering: the `filter_object` query parameter takes a JSON string with `field` / `operator` / `value` (operators `eq`, `neq`, `gt`, `lt`, `in`, `not_in`, `like`), composable with `and` / `or`. Paging via `limit` / `offset`, ordering via `sort_by` / `sort`.
 - Scope: one row per concluded compliance action since FY2005.
 
