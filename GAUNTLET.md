@@ -120,6 +120,17 @@ while the siblings run 4.1.10. A rate-limiter read called fairrent's throttle na
 it is correctly serialized. **Standing rule for this repo: a probe that cannot be shown
 to return a negative is not evidence** (workspace Audit Discipline Rules 22/23).
 
+### 2026-08-23 — 1.1.0: top_cases, flagged_employers, date windows, visible truncation (behavior-change class)
+
+`top_cases` (largest by back wages, no employer required), `flagged_employers`
+(WHD's flsa_repeat_violator flag; the note says it is WHD's characterization,
+not a court finding). found_after/found_before windows on the list tools.
+The audit's silent-truncation finding closed structurally: list tools request
+limit+1 and report has_more — a page of exactly `limit` rows is no longer
+indistinguishable from a complete answer. Rungs: 30 tests, typecheck,
+verify:pack. ⚠️ No DOL key on this machine; live smoke gated, changes are
+mock-verified against the already-live-verified request grammar.
+
 ## Known gaps, ranked by blast radius
 
 1. **README-as-artifact.** It is what LobeHub and Glama render, and it still documents the
