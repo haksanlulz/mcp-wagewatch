@@ -48,7 +48,10 @@ Sources:
 Notes:
 - There is no single total-CMP-dollar column in WHISARD. `cmp_assd_cnt` is a count of assessments; the dollar penalties live in per-statute columns (`flsa_cmp_assd_amt`, `mspa_cmp_assd_amt`, `h1b_cmp_assd_amt`, and so on). `civil_penalties` sums those.
 - `back_wages_summary` aggregates client-side (the API does not expose a group-by), over up to `max_cases` matching rows (default 1000). If `capped` is true the totals are a floor.
-- Name search uses SQL `LIKE` on `trade_nm` and `legal_name`, wrapping the term as `%term%`. The term is uppercased defensively (WHD stores names largely in uppercase) and `LIKE` metacharacters (`%`, `_`, `\`) are escaped so they match literally. See the caveats below.
+- Name search uses SQL `LIKE` on `trade_nm` and `legal_name`, wrapping the term as `%term%`. The endpoint's `LIKE` is case-insensitive (confirmed live: mixed-case stored names match an uppercased term), and `LIKE` metacharacters (`%`, `_`, `\`) are escaped so they match literally.
+- **A zero-match filter answers HTTP 204 with an empty body** (confirmed live) — the server parses that as an empty result set, so "no concluded case found" is a real answer: `count: 0`, `has_more: false`, and the data-currency note that absence is not evidence of compliance.
+- **All `filter_object` values must be JSON strings** — the engine answers a 500 "server error querying the dataset" for numeric values (`{"value": 0}` fails, `{"value": "0"}` works; confirmed live). Every filter value is string-coerced at serialization time.
+- List tools request `limit + 1` rows and report `has_more`, so a page of exactly `limit` rows is never mistakable for a complete answer.
 
 ## Install
 
@@ -96,8 +99,9 @@ Without the key the tools return an error naming the variable and the key-signup
 
 ```json
 {
-  "query": { "employer": "tyson", "state": "AR" },
+  "query": { "employer": "tyson", "state": "AR", "found_after": null, "found_before": null },
   "count": 1,
+  "has_more": false,
   "cases": [
     {
       "case_id": "1234567",
@@ -128,13 +132,9 @@ newest record. When a result set carries no dates,
 
 Then pass a `case_id` to `case_detail` for the per-statute breakdown.
 
-## Caveats
+## Verification state
 
-The metadata endpoint is key-gated and this was built without a key, so:
-
-- The column names are checked against the published WHISARD data dictionary (table `whd_whisard`) and the dataset description, not against the live `WHD/enforcement` metadata endpoint (which requires the key). The v4 `enforcement` endpoint is the same underlying WHISARD data, so the names are expected to match, but the exact live field list is unconfirmed. The normalizer is defensive: unknown-shaped values coerce to `null` rather than throwing, and the CMP total scans every `*_cmp_assd_amt` column present.
-- `LIKE` case-sensitivity on the DOL endpoint is unconfirmed, so the search term is uppercased defensively before the `%term%` wrap (WHD stores names largely in uppercase) and `LIKE` metacharacters are escaped to match literally. If name searches still under-return, casing on the endpoint is the place to look.
-- Run `npm run smoke` with a real key to confirm field names and behavior end to end before relying on output.
+Everything has been run live against the real API with a real key (`npm run smoke`, 6/6, 2026-08-23), and three contract facts were only discoverable live: the key is accepted **only as a query parameter** (the `X-API-KEY` header form answers 401), a zero-match filter answers **HTTP 204 with an empty body**, and **numeric `filter_object` values 500** (strings work). All three are handled and regression-tested. Column names were confirmed against live rows; the normalizer stays defensive regardless (unknown-shaped values coerce to `null`, and the CMP total scans every `*_cmp_assd_amt` column present).
 
 ## Develop
 
@@ -146,7 +146,7 @@ npm run typecheck
 
 ## AI assistance
 
-This project was built with AI assistance (Claude). Correctness was established by the mocked vitest suite (a real MCP client/server pair over an in-memory transport, fetch stubbed with the documented DOL response shapes) plus `npm run typecheck` — not by live API calls; the caveats above scope what stays unconfirmed until `npm run smoke` runs with a real key. The author reviewed the code and is accountable for it.
+This project was built with AI assistance (Claude). Correctness was established by the mocked vitest suite (a real MCP client/server pair over an in-memory transport, fetch stubbed with the real response shapes), `npm run typecheck`, and live runs of every tool against the real DOL API with a real key — which is where the query-param auth, 204-empty, and string-only-filter contract facts came from. The author reviewed the code and is accountable for it.
 
 ## License
 
