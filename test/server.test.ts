@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer } from "../server.js";
+import { createServer, clearDolCache } from "../server.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures: real WHISARD (WHD/enforcement) column names and response envelope.
@@ -89,6 +89,10 @@ async function call(name: string, args: Record<string, unknown>) {
 function payload(result: any) {
   return JSON.parse(result.content[0].text);
 }
+
+// The response cache lives for the process; without this a value cached by one
+// test is served to the next and the suite becomes order-dependent.
+beforeEach(() => clearDolCache());
 
 beforeEach(async () => {
   fetchMock = vi.fn();
@@ -467,5 +471,34 @@ describe("wagewatch 1.1.0", () => {
     expect(filter.and).toContainEqual({ field: "flsa_repeat_violator", operator: "eq", value: "R" });
     expect(String(body.note)).toContain("not a court finding");
     expect(body).toHaveProperty("data_currency");
+  });
+});
+
+describe("response cache", () => {
+  // The WHD dataset records CONCLUDED cases, so a repeat query in one session is
+  // asking about history that has already happened.
+  it("serves a repeated query without a second request", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    await call("employer_violations", { employer: "acme" });
+    await call("employer_violations", { employer: "acme" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a different employer as a different key", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    await call("employer_violations", { employer: "acme" });
+    await call("employer_violations", { employer: "globex" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache a failure", async () => {
+    fetchMock.mockResolvedValue(textResponse("boom", { ok: false, status: 500 }));
+    const bad: any = await call("employer_violations", { employer: "acme" });
+    expect(bad.isError).toBe(true);
+    const after = fetchMock.mock.calls.length;
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    const good: any = await call("employer_violations", { employer: "acme" });
+    expect(good.isError).toBeFalsy();
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(after);
   });
 });

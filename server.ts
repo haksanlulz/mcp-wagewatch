@@ -198,8 +198,55 @@ function stringifyFilterValues(node: FilterObject): FilterObject {
 }
 
 /** Execute one GET against the WHD/enforcement endpoint and return raw rows. */
+// DOL's WHD enforcement dataset is a record of CONCLUDED cases, so a repeat
+// query inside a session is asking about history that has already happened. A
+// day is a conservative TTL against a dataset that updates in batches.
+//
+// In memory, LRU-bounded, successful reads only -- caching an error would pin a
+// transient failure for the life of the process. DOL_CACHE_TTL_MS=0 disables it.
+//
+// Keyed on the query params, deliberately NOT on the request URL: the API key
+// rides in the query string (see dolGetOnce), and a cache key built from the URL
+// would put the key in a Map that error messages and debug dumps can reach.
+const CACHE_TTL_MS = Number(process.env.DOL_CACHE_TTL_MS ?? 24 * 60 * 60 * 1000);
+const CACHE_MAX = Number(process.env.DOL_CACHE_MAX ?? 300);
+const cache = new Map<string, { at: number; rows: Row[] }>();
+
+function cacheGet(key: string): Row[] | undefined {
+  if (CACHE_TTL_MS <= 0) return undefined;
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  if (Date.now() - hit.at > CACHE_TTL_MS) {
+    cache.delete(key);
+    return undefined;
+  }
+  cache.delete(key); // re-insert so Map order is LRU
+  cache.set(key, hit);
+  return hit.rows;
+}
+
+function cacheSet(key: string, rows: Row[]): void {
+  if (CACHE_TTL_MS <= 0) return;
+  cache.set(key, { at: Date.now(), rows });
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
+}
+
+/** Exported for tests: a cache that cannot be cleared makes the suite order-dependent. */
+export function clearDolCache(): void {
+  cache.clear();
+}
+
 async function dolGet(params: QueryParams): Promise<Row[]> {
-  return withRetry(() => dolGetOnce(params));
+  const key = JSON.stringify(params);
+  const hit = cacheGet(key);
+  if (hit) return hit;
+  const rows = await withRetry(() => dolGetOnce(params));
+  cacheSet(key, rows);
+  return rows;
 }
 
 async function dolGetOnce(params: QueryParams): Promise<Row[]> {
