@@ -116,6 +116,57 @@ interface QueryParams {
 }
 
 /** Pull the record array out of the DOL response envelope, defensively. */
+// DOL's endpoint is public and shared, so a 429 or a 5xx is a "come back", not a
+// verdict. Ported from mcp-housing, which learned this the expensive way: with no
+// retry, most sweeps came back PARTIAL and a downstream baseline never advanced.
+//
+// Retried: 429, 5xx, and transport errors. NOT retried: other 4xx -- a bad filter
+// or a rejected key is our mistake, and repeating it just spends the budget to be
+// told twice. Note 204 is NOT an error here at all (see dolGet): DOL answers an
+// empty body for a zero-match filter, which is a real answer.
+//
+// Each attempt re-enters throttled(), so the spacing floor holds across retries,
+// and RETRY_DEADLINE_MS bounds total wall-clock because an MCP client has its own
+// call timeout.
+class HttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+// A response we understood well enough to know it will not improve: a non-JSON
+// body, or a shape this code does not recognise. Usually a rejected key, which
+// answers identically however many times it is asked.
+class PermanentError extends Error {}
+
+const HTTP_ATTEMPTS = Number(process.env.DOL_HTTP_ATTEMPTS ?? 3);
+const RETRY_BACKOFF_MS = [500, 2000];
+const RETRY_DEADLINE_MS = 40_000;
+const HTTP_TIMEOUT_MS = 15_000;
+
+function isRetryable(e: unknown): boolean {
+  if (e instanceof PermanentError) return false;
+  if (e instanceof HttpError) return e.status === 429 || e.status >= 500;
+  return true; // transport error or abort
+}
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const started = Date.now();
+  let last: unknown;
+  for (let attempt = 0; attempt < HTTP_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (attempt === HTTP_ATTEMPTS - 1 || !isRetryable(e)) break;
+      const backoff = RETRY_BACKOFF_MS[attempt] ?? 2000;
+      if (Date.now() - started + backoff + HTTP_TIMEOUT_MS > RETRY_DEADLINE_MS) break;
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw last;
+}
+
 function extractRows(json: unknown): Row[] {
   if (Array.isArray(json)) return json as Row[];
   if (json && typeof json === "object") {
@@ -127,7 +178,7 @@ function extractRows(json: unknown): Row[] {
     // is an API-level error envelope (e.g. {"status":"error","message":"quota
     // exceeded"}), NOT an empty result set. Failing open here would report a false
     // "0 cases" / "no wage-theft history", so reject it.
-    throw new Error(
+    throw new PermanentError(
       "DOL API returned an unrecognized response: " + JSON.stringify(json).slice(0, 300),
     );
   }
@@ -148,6 +199,10 @@ function stringifyFilterValues(node: FilterObject): FilterObject {
 
 /** Execute one GET against the WHD/enforcement endpoint and return raw rows. */
 async function dolGet(params: QueryParams): Promise<Row[]> {
+  return withRetry(() => dolGetOnce(params));
+}
+
+async function dolGetOnce(params: QueryParams): Promise<Row[]> {
   const key = apiKey();
   const url = new URL(`${DOL_API}/get/${WHD_AGENCY}/${WHD_ENDPOINT}/json`);
   if (params.limit != null) url.searchParams.set("limit", String(params.limit));
@@ -166,7 +221,7 @@ async function dolGet(params: QueryParams): Promise<Row[]> {
   const res = await throttled(() =>
     fetch(url, {
       headers: { Accept: "application/json", "User-Agent": UA },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     }),
   );
   const text = await res.text();
@@ -178,7 +233,7 @@ async function dolGet(params: QueryParams): Promise<Row[]> {
   if (res.status === 204 || (res.ok && text.trim() === "")) return [];
 
   if (!res.ok) {
-    throw new Error(`DOL API request failed (HTTP ${res.status}): ${text.slice(0, 300).trim()}`);
+    throw new HttpError(`DOL API request failed (HTTP ${res.status}): ${text.slice(0, 300).trim()}`, res.status);
   }
   let json: unknown;
   try {
@@ -186,7 +241,7 @@ async function dolGet(params: QueryParams): Promise<Row[]> {
   } catch {
     // Auth failures come back as a plain-text sentence (e.g. "The API key is
     // either incorrect or missing..."), sometimes with a 200. Surface it clearly.
-    throw new Error(`DOL API returned a non-JSON response: ${text.slice(0, 300).trim()}`);
+    throw new PermanentError(`DOL API returned a non-JSON response: ${text.slice(0, 300).trim()}`);
   }
   return extractRows(json);
 }

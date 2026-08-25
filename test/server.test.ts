@@ -248,11 +248,28 @@ describe("employer_violations", () => {
     expect(res.content[0].text).toContain("non-JSON");
   });
 
-  it("surfaces an HTTP error status as isError", async () => {
-    fetchMock.mockResolvedValueOnce(textResponse("upstream boom", { ok: false, status: 500 }));
+  it("surfaces an HTTP error status as isError, after exhausting retries", async () => {
+    // A 5xx is retried (see withRetry), so the mock must answer every attempt.
+    fetchMock.mockResolvedValue(textResponse("upstream boom", { ok: false, status: 500 }));
     const res: any = await call("employer_violations", { employer: "acme" });
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain("500");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does NOT retry a 4xx", async () => {
+    // A rejected filter answers the same however many times it is asked.
+    fetchMock.mockResolvedValue(textResponse("bad filter", { ok: false, status: 400 }));
+    const res: any = await call("employer_violations", { employer: "acme" });
+    expect(res.isError).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT retry a non-JSON body, which is usually a rejected key", async () => {
+    fetchMock.mockResolvedValue(textResponse("The API key is either incorrect or missing", { ok: true, status: 200 }));
+    const res: any = await call("employer_violations", { employer: "acme" });
+    expect(res.isError).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a 200 error-object body instead of reading it as zero cases", async () => {
