@@ -133,13 +133,27 @@ Then pass a `case_id` to `case_detail` for the per-statute breakdown.
 
 Everything has been run live against the real API with a real key (`npm run smoke`, 6/6, 2026-08-23), and three contract facts were only discoverable live: the key is accepted **only as a query parameter** (the `X-API-KEY` header form answers 401), a zero-match filter answers **HTTP 204 with an empty body**, and **numeric `filter_object` values 500** (strings work). All three are handled and regression-tested. Column names were confirmed against live rows; the normalizer stays defensive regardless (unknown-shaped values coerce to `null`, and the CMP total scans every `*_cmp_assd_amt` column present).
 
-## Develop
+## Testing
+
+Two tiers, split by script. No test markers; the split is which command you run.
 
 ```
-npm test         # vitest, fetch mocked with the documented response shapes (no key needed)
-npm run smoke    # one live call per tool (needs DOL_API_KEY; skips cleanly without)
+npm test           # offline: vitest, fetch mocked with the documented response shapes, no key needed
+npm run smoke      # live: one real call per tool against the DOL API (needs DOL_API_KEY; skips and exits 0 without it)
 npm run typecheck
+npm run verify:pack  # packs the tarball, installs it in a throwaway project, launches through the bin shim, speaks MCP
 ```
+
+Counts, measured 2026-09-11:
+
+- App: 1081 lines (`server.ts` 854, `smoke.ts` 90, `scripts/pack-probe.mjs` 129, `index.ts` 8). `find . -type f \( -name '*.ts' -o -name '*.mjs' \) -not -path './node_modules/*' -not -path './dist/*' -not -path './test/*' | xargs wc -l`
+- Tests: 568 lines, 38 tests in 2 files. `find ./test -name '*.test.ts' | xargs wc -l` and `grep -cE '^\s*(it|test)\(' test/*.test.ts`
+
+What the offline suite covers, by layer: `test/server.test.ts` runs a real MCP client and server over an in-memory transport with fetch stubbed, and asserts the request grammar (filter_object shape, LIKE escaping, uppercasing, string-coerced values, limit+1 probe row, query-param key, User-Agent, abort signal), the response normalization (field map, per-statute penalty sums, 204-empty as zero matches, error envelopes rejected), the retry policy (3 attempts on 5xx, none on 4xx or a non-JSON body), the response cache, and the data_currency spec. `test/no-http-stack.test.ts` pins the dependency surface: stdio transport only, one runtime dependency. The live smoke and `verify:pack` cover what mocks cannot: the DOL contract and the published npm artifact.
+
+Mutation probe, 2026-09-11: dropping the `%` escape from `escapeLike` in `server.ts` failed exactly one test, `employer_violations > escapes LIKE metacharacters in the employer term so they match literally` (37 of 38 passed). Restored after the run.
+
+The 9 call-count assertions in the suite were audited 2026-09-11 and all kept: each one pins a contract (no network call before validation passes, retry counts, cache dedupe), not that a function was invoked. Policy: assert behavior and payloads, not that a function was called.
 
 ## AI assistance
 
