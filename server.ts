@@ -67,10 +67,18 @@ function apiKey(): string {
 let queue: Promise<unknown> = Promise.resolve();
 
 /**
- * Run `fn` after all prior throttled calls, spacing each request START by
- * THROTTLE_MS. The returned promise settles as soon as `fn` does; the gap is
- * added to the queue for the NEXT call rather than padded onto this one. `fn`
- * runs on both settle paths so a prior rejection cannot stall the queue.
+ * Run `fn` after all prior throttled calls, leaving at least THROTTLE_MS
+ * between one call SETTLING and the next one starting.
+ *
+ * Say it that way round, because it is not start-to-start spacing: the gap is
+ * chained onto the previous call's settle, so the real interval between two
+ * request starts is upstream latency plus THROTTLE_MS. That is the
+ * conservative direction against a shared free federal API and it is the
+ * intent — but a scan whose mock answers instantly cannot tell the two apart,
+ * and this docstring claimed the stricter property for a while on the strength
+ * of one. The returned promise settles as soon as `fn` does, so a caller never
+ * waits out the gap. `fn` runs on both settle paths, so a prior rejection
+ * cannot stall the queue.
  */
 function throttled<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.then(fn, fn);

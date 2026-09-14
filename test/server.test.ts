@@ -947,12 +947,23 @@ describe("outbound throttle", () => {
     expect(maxInFlight).toBe(1); // never two requests on the wire at once
   });
 
-  it("spaces request STARTS by the throttle gap", async () => {
-    // Start-to-start, not gap-after-response: a slow reply must not let the next
-    // request go out immediately behind it.
+  it("waits out the throttle gap after the previous response settles", async () => {
+    // What the code actually does, measured rather than assumed. throttled()
+    // chains the gap onto the PREVIOUS call's settle, so real start-to-start
+    // spacing is upstream latency PLUS the gap. That is the conservative
+    // direction and it is deliberate, but a zero-latency mock cannot tell it
+    // apart from true start-to-start spacing — which is what GAUNTLET §3
+    // certified for a while, off a scan that could not measure it.
+    //
+    // The mock therefore takes real time, and both relations are asserted: the
+    // gap floor after the response, and the consequence at the starts.
+    const LATENCY = 300;
     const starts: number[] = [];
+    const ends: number[] = [];
     fetchMock.mockImplementation(async () => {
       starts.push(Date.now());
+      await new Promise((r) => setTimeout(r, LATENCY));
+      ends.push(Date.now());
       return jsonResponse([]);
     });
 
@@ -963,9 +974,14 @@ describe("outbound throttle", () => {
     ]);
 
     expect(starts).toHaveLength(3);
+    expect(ends).toHaveLength(3);
     for (let i = 1; i < starts.length; i++) {
-      // 150ms floor; the slack is host timer resolution, not policy.
-      expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(140);
+      // 150ms floor; the 10ms slack is host timer resolution, not policy.
+      expect(starts[i] - ends[i - 1]).toBeGreaterThanOrEqual(140);
+      // ... which means a slow reply pushes the next start out by its own
+      // latency as well. An implementation that spaced starts alone would send
+      // the next request the instant the gap elapsed, mid-response.
+      expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(LATENCY + 140);
     }
   });
 });
