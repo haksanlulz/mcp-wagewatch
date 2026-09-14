@@ -211,34 +211,40 @@ npm run verify:mcpb  # packs the .mcpb bundle, extracts it cold, launches the ma
 
 Counts, measured 2026-09-14:
 
-- App: 1918 lines (`server.ts` 1080, `smoke.ts` 240, `scripts/mcpb-probe.mjs` 196, `scripts/lib/zip.mjs` 172, `scripts/pack-probe.mjs` 129, `scripts/pack-mcpb.mjs` 93, `index.ts` 8). `find . -type f \( -name '*.ts' -o -name '*.mjs' \) -not -path './node_modules/*' -not -path './dist/*' -not -path './test/*' | xargs wc -l`
-- Tests: 1071 lines, 77 tests in 2 files. `find ./test -name '*.test.ts' | xargs wc -l` for the lines; the test count is vitest's. The grep `grep -cE '^\s*(it|test)\(' test/*.test.ts` reads 72, because the per-tool unknown-argument cases are generated in a loop — one `it(` for six tests.
+- App: 2046 lines (`server.ts` 1163, `smoke.ts` 264, `scripts/mcpb-probe.mjs` 217, `scripts/lib/zip.mjs` 172, `scripts/pack-probe.mjs` 129, `scripts/pack-mcpb.mjs` 93, `index.ts` 8). `find . -type f \( -name '*.ts' -o -name '*.mjs' \) -not -path './node_modules/*' -not -path './dist/*' -not -path './test/*' | xargs wc -l`
+- Tests: 1242 lines, 87 tests in 2 files. `find ./test -name '*.test.ts' | xargs wc -l` for the lines; the test count is vitest's. The grep `grep -cE '^\s*(it|test)\(' test/*.test.ts` reads 82, because the per-tool unknown-argument cases are generated in a loop — one `it(` for six tests.
 
-What the offline suite covers, by layer: `test/server.test.ts` runs a real MCP client and server over an in-memory transport with fetch stubbed, and asserts the request grammar (filter_object shape, LIKE escaping and case variants, string-coerced values and array values, inclusive date bounds, limit+1 probe row, query-param key, User-Agent, abort signal), the argument contract (unknown keys refused before any network call, one case per tool), the response normalization (field map, per-statute penalty sums, the repeat/willful flag, 204-empty as zero matches, error envelopes rejected), the retry policy (3 attempts on 5xx, none on 4xx or a non-JSON body), the environment knobs (a bad value falls back to the documented default rather than killing the retry loop or freezing the cache), the outbound throttle (concurrent calls serialized, and the gap held between one response settling and the next request going out, measured against a mock that takes real time), the redaction of the request URL and key out of every error message, the response cache including LRU eviction, and the data_currency spec. `test/no-http-stack.test.ts` pins the dependency surface: stdio transport only, one runtime dependency. The live smoke, `verify:pack` and `verify:mcpb` cover what mocks cannot: the DOL contract, the published npm artifact and the .mcpb bundle.
+What the offline suite covers, by layer: `test/server.test.ts` runs a real MCP client and server over an in-memory transport with fetch stubbed, and asserts the request grammar (filter_object shape, LIKE escaping and case variants, string-coerced values and array values, inclusive date bounds, limit+1 probe row, query-param key, User-Agent, abort signal), the argument contract (unknown keys refused before any network call, one case per tool), the response normalization (field map, per-statute penalty sums, the repeat/willful flag, 204-empty as zero matches, error envelopes rejected), the retry policy (3 attempts on 5xx, none on 4xx or a non-JSON body), the environment knobs (a bad value falls back to the documented default rather than killing the retry loop or freezing the cache), the outbound throttle (concurrent calls serialized, and the gap held between one response settling and the next request going out, measured against a mock that takes real time), the redaction of the request URL and key out of every error message, the response cache including LRU eviction, the refusal of a transposed date window, the case-coverage note on a zero-result name search, and the data_currency spec on every result shape including the aggregate's. `test/no-http-stack.test.ts` pins the dependency surface: stdio transport only, one runtime dependency. The live smoke, `verify:pack` and `verify:mcpb` cover what mocks cannot: the DOL contract, the published npm artifact and the .mcpb bundle.
 
 Mutation probes, 2026-09-14, each restored after the run:
 
-| Mutation in `server.ts` | Reddened |
+| Mutation | Reddened |
 |---|---|
 | `shiftIsoDate(after, -1)` → `0` (inclusive date bound) | 3 tests, 47 of 50 passing at the time |
 | bad-value branch of `envInt` → `false` | 4 tests, including "no tool result can carry the text 'Error: undefined'" |
 | drop the `validateArgs` call | 9 of the 11 unknown-argument tests; the coverage assertion and the accepts-declared-arguments test stay green, correctly |
 | drop `top_cases`' NAICS prefix filter | both `top_cases` filter tests |
 | `FLAG_SEARCHES.W` → `["W"]` | the willful-includes-RW test |
-| `capped: rows.length >= cap` → `> cap` | the capped test |
 | `cacheMax()` → `Infinity` | the LRU eviction test |
 | `violations_by_state`' truncation note → `undefined` | the has_more note test |
 | drop `redactSecrets` from the error path | the URL/key redaction test |
 | `queue.then(fn, fn)` → `fn()` (throttle serialization) | the serialization test, and the spacing test with it |
 | `THROTTLE_MS` → `0` | the spacing test |
 | the throttle gap re-chained onto the queue gate (true start-to-start spacing) | the spacing test, at −143ms |
+| `newestFindingsDate` scanning `findings_end_date` only (WW-A) | the aggregate-vintage case, written red first |
+| neutering the transposed-window check (WW-C) | the transposed-window case |
+| `capped: fetched.length > cap` → `rows.length >= cap` (WW-G) | the exact-max_cases case |
+| restoring back_wages_summary's `fields` allow-list (WW-J) | the unnamed-penalty-column case, under a mock that honours `fields` |
+| dropping either zero-result case hint (WW-B) | exactly that tool's case, one each |
+| a planted `.env` inside a bundled dependency (WW-F, `npm run verify:mcpb`) | the leaked-file check, exit 1 |
+| a planted type error in `smoke.ts`, and one in `test/` (WW-I, `npm run typecheck`) | each named with file:line, exit 1 |
 | revert WW-1's case variants (live `npm run smoke`) | 2 checks red — `employer_violations` "expected >= 2 cases, got 0" and `back_wages_summary` "expected >= 100 cases for Walmart, got 1" at $0 total — exit 1 |
 
 Earlier probe, 2026-09-11: dropping the `%` escape from `escapeLike` failed exactly one test, `employer_violations > escapes LIKE metacharacters in the employer term so they match literally` (37 of 38 passed).
 
 One note on running probes here: `npx vitest run --reporter=basic` exits 1 without running anything on vitest 4, so a probe wired that way reports every mutation as red whether or not the suite noticed. Use the default reporter and read the per-test FAIL lines.
 
-The call-count assertions — 24 in the source as of 2026-09-14, up from the 9 audited on 2026-09-11 — were each kept for pinning a contract, not for recording that a function ran: no network call before validation passes (the largest group, one per tool since arguments are now checked up front), retry counts under the attempt ceiling, cache dedupe and LRU eviction. Policy: assert behavior and payloads, not that a function was called.
+The call-count assertions — 26 in the source as of 2026-09-14, up from the 9 audited on 2026-09-11 — were each kept for pinning a contract, not for recording that a function ran: no network call before validation passes (the largest group, one per tool since arguments are now checked up front), retry counts under the attempt ceiling, cache dedupe and LRU eviction. Policy: assert behavior and payloads, not that a function was called.
 
 ## AI assistance
 
