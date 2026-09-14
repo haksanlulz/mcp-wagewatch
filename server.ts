@@ -462,9 +462,13 @@ function clampLimit(v: unknown, fallback: number): number {
  * Source, so this list is not a remembered one: the Census Bureau's canonical
  * FIPS/USPS reference https://www2.census.gov/geo/docs/reference/state.txt
  * (STUSAB column, fetched 2026-09-14) -- 57 codes, 50 states + DC + AS, GU, MP,
- * PR, UM, VI. It is the federal code domain, NOT a measured enumeration of the
- * values WHISARD happens to hold; a code outside it is not a place WHD can have
- * concluded a case in, whatever the dataset contains.
+ * PR, UM, VI.
+ *
+ * And it is the dataset's domain too, measured rather than assumed: the whole
+ * list as one `not_in` filter answers HTTP 204 (2026-09-14), so no WHISARD row
+ * carries an st_cd outside it. That probe was shown red-capable first -- the
+ * same filter with "NY" removed returns NY rows -- because a 204 is also what a
+ * broken filter looks like.
  *
  * It is checked here rather than sent because `{st_cd eq "ZZ"}` is a legal
  * filter that DOL answers 204, which this server renders as count 0 under the
