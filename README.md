@@ -63,7 +63,7 @@ Notes:
 
 The bundle carries `dist/`, `manifest.json`, `package.json`, and the **production dependency tree** — 3,523 files, 4.4 MB, measured 2026-09-14. That makes the dependency surface a shipped payload rather than a resolution-time detail, which is what `test/no-http-stack.test.ts` bounds: one runtime dependency, stdio transport only, no HTTP transport in the executed path.
 
-`npm run verify:mcpb` packs the bundle, reads the ZIP back, confirms an independent unzip agrees, checks the manifest's version against `package.json` and that its `entry_point` is actually inside the archive, then extracts to a throwaway directory and launches the server the way `mcp_config` says to, asserting `tools/list` returns the documented six.
+`npm run verify:mcpb` packs the bundle, reads the ZIP back, confirms an independent unzip agrees, checks the manifest's version against `package.json` and that its `entry_point` is actually inside the archive, then extracts to a throwaway directory and launches the server the way `mcp_config` says to, asserting `tools/list` returns the documented six. It also refuses a bundle carrying a credential-shaped file (`.env`, `.npmrc`, `.netrc`, `.git-credentials`) anywhere in the tree, dependencies included — the root-anchored source-and-test patterns beside it cannot match anything the packer emits and are a guard against a future packer change, not a live check.
 
 ### As an npm package
 

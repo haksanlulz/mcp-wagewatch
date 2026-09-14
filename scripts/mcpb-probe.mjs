@@ -76,10 +76,31 @@ if (env.DOL_API_KEY !== "${user_config.api_key}") {
 ok("DOL_API_KEY is a required, sensitive user_config field, injected through mcp_config.env");
 
 // --- 5. nothing that should not ship ------------------------------------------
-const leaked = [...zip.keys()].filter((f) => /^(test\/|smoke\.ts|server\.ts|index\.ts|tsconfig|\.env|live-check)/.test(f));
+// Two different checks wearing one name, and only the first was here.
+//
+// The repo-root patterns are anchored at the bundle root, and pack-mcpb.mjs
+// adds exactly manifest.json, package.json, README.md, LICENSE, dist/** and
+// production dependency trees under node_modules/**. So no packer output can
+// produce a root-level test/, smoke.ts, server.ts, index.ts, tsconfig or
+// live-check path — `dist/index.js` does not match `^index\.ts` — and this
+// check printed ok unconditionally. It is kept as a guard against a future
+// change to the packer, not as something that can fail today.
+//
+// What it was blind to is the case worth guarding: this bundle ships a whole
+// node_modules tree as FILES rather than resolving it at install, so a
+// credential file sitting anywhere inside those 3,500-odd dependency files
+// would ride along, and nothing looked below the root.
+const leaked = [...zip.keys()].filter(
+  (f) =>
+    // repo-authored files at the bundle root
+    /^(test\/|smoke\.ts|server\.ts|index\.ts|tsconfig|live-check)/.test(f) ||
+    // credential-shaped files ANYWHERE in the tree, dependencies included
+    /(^|\/)\.env(\.|$)/.test(f) ||
+    /(^|\/)\.(npmrc|netrc|git-credentials)$/.test(f),
+);
 if (leaked.length) fail(`bundle carries non-shippable files: ${leaked.slice(0, 10).join(", ")}`);
 const toolNames = (manifest.tools ?? []).map((t) => t.name).sort();
-ok(`no sources or tests; manifest advertises ${toolNames.length} tools`);
+ok(`no sources, tests or credential files; manifest advertises ${toolNames.length} tools`);
 
 // --- 6. an independent unzip agrees this is a zip ------------------------------
 // Our own reader round-tripping our own writer proves nothing about the format.
