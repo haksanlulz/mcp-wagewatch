@@ -156,17 +156,23 @@ describe("employer_violations", () => {
     expect(c.naics_description).toBe("Poultry Processing");
   });
 
-  it("builds an uppercased trade_nm/legal_name LIKE filter, sorted by back wages", async () => {
+  it("builds a case-variant trade_nm/legal_name LIKE filter, sorted by back wages", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
     await call("employer_violations", { employer: "acme" });
 
     const url = lastUrl();
     expect(url.origin + url.pathname).toBe("https://apiprod.dol.gov/v4/get/WHD/enforcement/json");
     const filter = JSON.parse(url.searchParams.get("filter_object")!);
+    // DOL's LIKE is case-sensitive and WHISARD stores names mixed-case, so the
+    // term rides in every case variant across both name columns.
     expect(filter).toEqual({
       or: [
+        { field: "trade_nm", operator: "like", value: "%acme%" },
         { field: "trade_nm", operator: "like", value: "%ACME%" },
+        { field: "trade_nm", operator: "like", value: "%Acme%" },
+        { field: "legal_name", operator: "like", value: "%acme%" },
         { field: "legal_name", operator: "like", value: "%ACME%" },
+        { field: "legal_name", operator: "like", value: "%Acme%" },
       ],
     });
     expect(url.searchParams.get("sort_by")).toBe("bw_atp_amt");
@@ -193,13 +199,41 @@ describe("employer_violations", () => {
     expect(opts.headers["User-Agent"]).toMatch(/^mcp-wagewatch\/\d/);
   });
 
-  it("uppercases the employer term in the LIKE filter (WHD stores names uppercase)", async () => {
+  it("keeps the raw-cased term in the LIKE filter, not only an uppercased one", async () => {
+    // The defect this pins: WHISARD stores 97% of names mixed-case and DOL's
+    // LIKE is case-sensitive, so an uppercase-only pattern answered a confident
+    // "no cases found" (live: "%KEVIN MISCH%" 204, "%Kevin Misch%" 200 x2 rows).
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
     await call("employer_violations", { employer: "Tyson Foods" });
 
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
-    expect(filter.or[0].value).toBe("%TYSON FOODS%");
-    expect(filter.or[1].value).toBe("%TYSON FOODS%");
+    const values = filter.or.map((n: any) => n.value);
+    expect(values).toContain("%Tyson Foods%"); // as typed — the stored shape
+    expect(values).toContain("%TYSON FOODS%"); // and the uppercase-stored rows
+    for (const field of ["trade_nm", "legal_name"]) {
+      const perField = filter.or.filter((n: any) => n.field === field).map((n: any) => n.value);
+      expect(perField).toContain("%Tyson Foods%");
+      expect(perField).toContain("%TYSON FOODS%");
+    }
+  });
+
+  it("title-cases a lowercase term so it matches mixed-case stored names", async () => {
+    // A caseworker types "kevin misch"; WHISARD holds "Kevin Misch Excavating".
+    // Neither the raw nor the uppercase variant matches that row.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    await call("employer_violations", { employer: "kevin misch" });
+
+    const values = JSON.parse(lastUrl().searchParams.get("filter_object")!).or.map((n: any) => n.value);
+    expect(values).toContain("%Kevin Misch%");
+  });
+
+  it("emits each case variant once, across both name columns", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    await call("employer_violations", { employer: "ACME" }); // raw === uppercase
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    // raw and upper collapse to one pattern, so 2 fields x 2 distinct variants.
+    expect(filter.or).toHaveLength(4);
+    expect(new Set(filter.or.map((n: any) => `${n.field}|${n.value}`)).size).toBe(4);
   });
 
   it("escapes LIKE metacharacters in the employer term so they match literally", async () => {
@@ -208,9 +242,14 @@ describe("employer_violations", () => {
     await call("employer_violations", { employer: "a_b%c\\d" });
 
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
-    // Uppercased to A_B%C\D, then backslash escaped first, then % and _.
-    expect(filter.or[0].value).toBe("%A\\_B\\%C\\\\D%");
-    expect(filter.or[1].value).toBe("%A\\_B\\%C\\\\D%");
+    // Every case variant is escaped: the case fold happens on the raw term and
+    // escapeLike runs after it, so no variant can reintroduce a live wildcard.
+    const values: string[] = filter.or.map((n: any) => n.value);
+    expect(values).toContain("%a\\_b\\%c\\\\d%"); // raw
+    expect(values).toContain("%A\\_B\\%C\\\\D%"); // uppercase
+    for (const v of values) {
+      expect(v.slice(1, -1)).not.toMatch(/(^|[^\\])[%_]/); // no unescaped wildcard inside
+    }
   });
 
   it("AND-combines the name filter with a state filter", async () => {

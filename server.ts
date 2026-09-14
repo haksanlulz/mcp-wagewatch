@@ -419,19 +419,45 @@ function escapeLike(term: string): string {
 }
 
 /**
- * Build a name filter that matches the term against trade_nm OR legal_name. WHD
- * stores names uppercase and the endpoint's LIKE is case-sensitive, so the term
- * is uppercased defensively; LIKE metacharacters are escaped so a stray `%`/`_`
- * in the input matches literally instead of acting as a wildcard.
+ * Case variants of a search term, each wrapped as a `%term%` LIKE pattern.
+ *
+ * The endpoint's LIKE is case-SENSITIVE and WHISARD stores names MIXED-CASE.
+ * Both halves verified live 2026-09-14: `{trade_nm like "%KEVIN MISCH%"}`
+ * answers HTTP 204 (zero rows) while `"%Kevin Misch%"` answers HTTP 200 with
+ * case_id 1476714 "Kevin Misch Excavating" and case_id 1419247; and of the 500
+ * most recent rows by findings_end_date, 485 (97%) carry a mixed-case
+ * `trade_nm`. So a single uppercased pattern answers "no cases found" for
+ * almost every employer in the dataset, and a single raw-cased one would miss
+ * the uppercase-stored remainder. Both cases go in the OR.
+ *
+ * Each variant is derived from the RAW term and escaped afterwards, so the
+ * metacharacter escaping cannot be bypassed by case-folding an escape sequence.
+ */
+function likeVariants(term: string): string[] {
+  const title = term.replace(/\S+/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
+  const out: string[] = [];
+  for (const variant of [term, term.toUpperCase(), title]) {
+    const like = `%${escapeLike(variant)}%`;
+    if (!out.includes(like)) out.push(like);
+  }
+  return out;
+}
+
+/**
+ * Build a name filter that matches the term against trade_nm OR legal_name, in
+ * every case variant. LIKE metacharacters are escaped so a stray `%`/`_` in the
+ * input matches literally instead of acting as a wildcard. The widest form is a
+ * 6-way `or` (2 fields x 3 variants); DOL's filter engine accepts it, alone and
+ * nested inside an `and` beside a state filter (both verified live 2026-09-14).
  */
 function nameFilter(term: string): FilterObject {
-  const like = `%${escapeLike(term.toUpperCase())}%`;
-  return {
-    or: [
-      { field: "trade_nm", operator: "like", value: like },
-      { field: "legal_name", operator: "like", value: like },
-    ],
-  };
+  const nodes: FilterObject[] = [];
+  for (const field of ["trade_nm", "legal_name"]) {
+    for (const like of likeVariants(term)) {
+      nodes.push({ field, operator: "like", value: like });
+    }
+  }
+  return { or: nodes };
 }
 
 // ---------------------------------------------------------------------------
