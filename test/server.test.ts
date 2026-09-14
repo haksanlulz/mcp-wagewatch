@@ -420,6 +420,74 @@ describe("unknown tool", () => {
   });
 });
 
+describe("unknown arguments", () => {
+  // Every inputSchema says additionalProperties:false, but the low-level Server
+  // does not validate against inputSchema, so an unknown key used to be dropped
+  // in silence: top_cases {state:"NY", found_afer:"2024-01-01"} answered with
+  // full history and query.found_after: null, which reads as a date-limited
+  // answer that happens to be wide.
+  const MINIMAL: Array<[string, Record<string, unknown>]> = [
+    ["employer_violations", { employer: "acme" }],
+    ["back_wages_summary", { state: "NY" }],
+    ["violations_by_state", { state: "NY" }],
+    ["top_cases", {}],
+    ["flagged_employers", {}],
+    ["case_detail", { case_id: "1" }],
+  ];
+
+  it("covers every registered tool", async () => {
+    const { tools } = await client.listTools();
+    expect(MINIMAL.map(([n]) => n).sort()).toEqual(tools.map((t) => t.name).sort());
+  });
+
+  for (const [tool, args] of MINIMAL) {
+    it(`${tool} rejects an unknown key before any network call`, async () => {
+      fetchMock.mockResolvedValue(jsonResponse([]));
+      const res: any = await call(tool, { ...args, bogus_param: 12345 });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("bogus_param");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  }
+
+  it("suggests the argument a near-miss was meant to be", async () => {
+    const res: any = await call("top_cases", { state: "NY", found_afer: "2024-01-01" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("found_afer");
+    expect(res.content[0].text).toContain('did you mean "found_after"');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("names every offending key and lists what the tool accepts", async () => {
+    const res: any = await call("employer_violations", { employer: "acme", bogus_param: 1, stat: "NY" });
+    const text = res.content[0].text;
+    expect(text).toContain("bogus_param");
+    expect(text).toContain('"stat" (did you mean "state"?)');
+    for (const accepted of ["employer", "state", "found_after", "found_before", "limit"]) {
+      expect(text).toContain(accepted);
+    }
+  });
+
+  it("does not invent a suggestion for a key that resembles nothing", async () => {
+    const res: any = await call("case_detail", { case_id: "1", xyzzy_plugh_frobozz: true });
+    expect(res.content[0].text).toContain("xyzzy_plugh_frobozz");
+    expect(res.content[0].text).not.toContain("did you mean");
+  });
+
+  it("lets the declared arguments through", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    const res: any = await call("employer_violations", {
+      employer: "acme",
+      state: "NY",
+      found_after: "2024-01-01",
+      found_before: "2026-01-01",
+      limit: 5,
+    });
+    expect(res.isError).toBeFalsy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // SPEC vintage-on-every-answer — operator-authored 2026-07-29
 // ---------------------------------------------------------------------------

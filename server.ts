@@ -461,6 +461,61 @@ function normDate(v: unknown, label: string): string | undefined {
   return s;
 }
 
+/** Levenshtein distance. Small inputs only — it exists to suggest a near-miss key. */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/** The closest accepted argument name, if it is close enough to be a typo. */
+function nearestArg(key: string, accepted: string[]): string | null {
+  let best: string | null = null;
+  let bestDistance = Infinity;
+  for (const candidate of accepted) {
+    const d = editDistance(key.toLowerCase(), candidate.toLowerCase());
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = candidate;
+    }
+  }
+  // Scale with the length of what was typed: one edit is a typo in a short name,
+  // three is still a typo in a long one, and neither makes "bogus_param" a
+  // misspelling of "limit".
+  return bestDistance <= Math.max(1, Math.floor(key.length / 3)) ? best : null;
+}
+
+/**
+ * Reject arguments the tool does not declare.
+ *
+ * Every inputSchema carries additionalProperties:false, but the low-level Server
+ * does not validate against inputSchema — it hands the arguments object to the
+ * handler as-is — so an unknown key was dropped without a word. A caller who
+ * typed `found_afer` got a full-history answer they believed was date-limited,
+ * with the query echo honestly reporting found_after: null. Verified end to end
+ * before this guard existed: top_cases {state:"NY", found_afer:"2024-01-01",
+ * bogus_param:12345} returned 20 cases and no error.
+ */
+function validateArgs(toolName: string, accepted: string[], args: Row): void {
+  const unknown = Object.keys(args).filter((k) => !accepted.includes(k));
+  if (unknown.length === 0) return;
+  const described = unknown.map((k) => {
+    const near = nearestArg(k, accepted);
+    return near ? `"${k}" (did you mean "${near}"?)` : `"${k}"`;
+  });
+  throw new Error(
+    `${toolName} does not accept ${described.join(", ")}. ` +
+      `Accepted arguments: ${accepted.join(", ")}. Nothing was queried.`,
+  );
+}
+
 /**
  * Shift an ISO date (YYYY-MM-DD) by whole days, in UTC so month and year
  * rollover are the calendar's problem and not this function's.
@@ -890,12 +945,13 @@ async function violationsByState(args: Row): Promise<unknown> {
 async function caseDetail(args: Row): Promise<unknown> {
   const caseId = str(args.case_id);
   if (!caseId) throw new Error("case_id is required.");
-  // case_id is numeric in WHISARD; send a number when it parses cleanly.
-  const value: unknown = /^\d+$/.test(caseId) ? Number(caseId) : caseId;
 
   const rows = await dolGet({
     limit: 1,
-    filter: { field: "case_id", operator: "eq", value },
+    // A string, like every other filter value: DOL 500s on numeric ones
+    // (stringifyFilterValues, verified live). A branch here that sent a number
+    // when the id parsed cleanly had no effect and said the opposite.
+    filter: { field: "case_id", operator: "eq", value: caseId },
   });
   if (rows.length === 0) {
     return { found: false, case_id: caseId };
@@ -983,11 +1039,14 @@ export function createServer(): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const handler = HANDLERS[name];
-    if (!handler) {
+    const tool = TOOLS.find((t) => t.name === name);
+    if (!handler || !tool) {
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
     try {
-      const result = await handler((args ?? {}) as Row);
+      const given = (args ?? {}) as Row;
+      validateArgs(name, Object.keys(tool.inputSchema.properties ?? {}), given);
+      const result = await handler(given);
       return { content: [{ type: "text", text: JSON.stringify(withDataCurrency(result), null, 2) }] };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
