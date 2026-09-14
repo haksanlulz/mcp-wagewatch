@@ -6,6 +6,11 @@ import { createServer, clearDolCache, resetEnvWarnings } from "../server.js";
 // ---------------------------------------------------------------------------
 // Fixtures: real WHISARD (WHD/enforcement) column names and response envelope.
 // The DOL API wraps records in { "data": [ ... ] }.
+//
+// Dates carry the shape the API actually returns: a full timestamp at midnight,
+// "2024-06-16T00:00:00", not a bare YYYY-MM-DD. The fixtures used to hold the
+// bare form, which is why nothing in this file noticed that found_after and
+// found_before were dropping their own day against real timestamps (WW-4).
 // ---------------------------------------------------------------------------
 
 const ROW_TYSON = {
@@ -31,8 +36,8 @@ const ROW_TYSON = {
   mspa_ee_atp_cnt: 8,
   mspa_cmp_assd_amt: 2500,
   flsa_repeat_violator: "R",
-  findings_start_date: "2021-01-01",
-  findings_end_date: "2022-01-01",
+  findings_start_date: "2021-01-01T00:00:00",
+  findings_end_date: "2022-01-01T00:00:00",
 };
 
 // Second row uses string numerics to exercise coercion, and a sparse schema.
@@ -45,8 +50,8 @@ const ROW_SMALL = {
   ee_violtd_cnt: "4",
   bw_atp_amt: "5000",
   flsa_cmp_assd_amt: "1000",
-  findings_start_date: "2019-06-01",
-  findings_end_date: "2019-12-01",
+  findings_start_date: "2019-06-01T00:00:00",
+  findings_end_date: "2019-12-01T00:00:00",
 };
 
 // ---------------------------------------------------------------------------
@@ -346,8 +351,10 @@ describe("back_wages_summary", () => {
     expect(body.total_back_wages).toBe(155000.5); // 150000.5 + 5000
     expect(body.total_employees_affected).toBe(92); // 88 + 4
     expect(body.total_civil_penalties).toBe(8500); // (5000+2500) + 1000
-    expect(body.earliest_findings_start).toBe("2019-06-01");
-    expect(body.latest_findings_end).toBe("2022-01-01");
+    // Echoed in the API's own timestamp shape: ISO-8601 sorts lexicographically,
+    // so the min/max scan is a string compare and needs no parsing.
+    expect(body.earliest_findings_start).toBe("2019-06-01T00:00:00");
+    expect(body.latest_findings_end).toBe("2022-01-01T00:00:00");
   });
 
   it("requires at least one of employer or state", async () => {
@@ -355,6 +362,24 @@ describe("back_wages_summary", () => {
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toMatch(/at least one/i);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("flags a total that hit max_cases as capped, because it is then a floor", async () => {
+    // The aggregate form of this server's MUST NEVER: a truncated sum reads as
+    // an employer's whole wage-theft history unless the answer says otherwise.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
+    const body = payload(await call("back_wages_summary", { employer: "tyson", max_cases: 2 }));
+    expect(body.case_count).toBe(2);
+    expect(body.capped).toBe(true);
+    expect(String(body.note)).toContain("the totals are a floor");
+    expect(lastUrl().searchParams.get("limit")).toBe("2");
+  });
+
+  it("does not flag a total that came in under max_cases", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
+    const body = payload(await call("back_wages_summary", { employer: "tyson", max_cases: 3 }));
+    expect(body.case_count).toBe(2);
+    expect(body.capped).toBe(false);
   });
 });
 
@@ -382,6 +407,55 @@ describe("violations_by_state", () => {
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toMatch(/2-letter/i);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports has_more and the truncation note when a page is full", async () => {
+    // The twin of this was pinned for employer_violations and not here, so a
+    // state page of exactly `limit` rows could still read as the whole story.
+    const rows = Array.from({ length: 21 }, (_, i) => ({
+      case_id: String(i + 1),
+      trade_nm: "ACME",
+      st_cd: "NY",
+      bw_atp_amt: "100",
+    }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(rows));
+    const body = payload(await call("violations_by_state", { state: "NY", limit: 20 }));
+    expect(lastUrl().searchParams.get("limit")).toBe("21"); // the probe row
+    expect(body.count).toBe(20);
+    expect(body.has_more).toBe(true);
+    expect(String(body.note)).toContain("More cases match");
+  });
+
+  it("carries no truncation note when the state page is complete", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([{ case_id: "1", trade_nm: "ACME", st_cd: "NY", bw_atp_amt: "100" }]));
+    const body = payload(await call("violations_by_state", { state: "NY", limit: 20 }));
+    expect(body.has_more).toBe(false);
+    expect(body.note).toBeUndefined();
+  });
+});
+
+describe("top_cases", () => {
+  it("filters by NAICS prefix, escaped so the term cannot act as a wildcard", async () => {
+    // violations_by_state's identical path was pinned and this one was not.
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("top_cases", { naics: "72" });
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    expect(filter.and).toContainEqual({ field: "naic_cd", operator: "like", value: "72%" });
+
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("top_cases", { naics: "7_2" });
+    const escaped = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    expect(escaped.and).toContainEqual({ field: "naic_cd", operator: "like", value: "7\\_2%" });
+  });
+
+  it("combines state, NAICS and a date window in one and-filter", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("top_cases", { state: "tx", naics: "722511", found_after: "2020-01-01" });
+    const nodes = JSON.parse(lastUrl().searchParams.get("filter_object")!).and;
+    expect(nodes).toContainEqual({ field: "st_cd", operator: "eq", value: "TX" });
+    expect(nodes).toContainEqual({ field: "naic_cd", operator: "like", value: "722511%" });
+    expect(nodes).toContainEqual({ field: "case_violtn_cnt", operator: "gt", value: "0" });
+    expect(nodes).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2019-12-31T23:59:59" });
   });
 });
 
@@ -509,9 +583,10 @@ describe("SPEC vintage-on-every-answer", () => {
   it("reports the newest findings date actually present, not today", async () => {
     // ROW_TYSON ends 2022-01-01, ROW_SMALL ends 2019-12-01. The answer is only
     // as current as its newest record — saying otherwise is the whole failure.
+    // Reported verbatim in the API's timestamp shape, not reformatted.
     fetchMock.mockResolvedValue(jsonResponse({ data: [ROW_SMALL, ROW_TYSON] }));
     const body = payload(await call("employer_violations", { employer: "x" }));
-    expect(body.data_currency.newest_findings_end_date).toBe("2022-01-01");
+    expect(body.data_currency.newest_findings_end_date).toBe("2022-01-01T00:00:00");
   });
 
   it("says so plainly when a result set carries no dates at all", async () => {
@@ -822,6 +897,24 @@ describe("response cache", () => {
     await call("employer_violations", { employer: "acme" });
     await call("employer_violations", { employer: "globex" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("evicts the oldest entry once DOL_CACHE_MAX is reached", async () => {
+    // Hits and misses were pinned; eviction was not, so a cache that grew
+    // without bound would have looked exactly like this one.
+    process.env.DOL_CACHE_MAX = "2";
+    fetchMock.mockResolvedValue(jsonResponse([]));
+
+    await call("employer_violations", { employer: "alpha" }); // 1
+    await call("employer_violations", { employer: "bravo" }); // 2
+    await call("employer_violations", { employer: "charlie" }); // 3 -> evicts alpha
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    await call("employer_violations", { employer: "charlie" }); // still cached
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    await call("employer_violations", { employer: "alpha" }); // evicted: refetched
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("does not cache a failure", async () => {

@@ -155,16 +155,31 @@ npm run typecheck
 npm run verify:pack  # packs the tarball, installs it in a throwaway project, launches through the bin shim, speaks MCP
 ```
 
-Counts, measured 2026-09-11:
+Counts, measured 2026-09-14:
 
-- App: 1081 lines (`server.ts` 854, `smoke.ts` 90, `scripts/pack-probe.mjs` 129, `index.ts` 8). `find . -type f \( -name '*.ts' -o -name '*.mjs' \) -not -path './node_modules/*' -not -path './dist/*' -not -path './test/*' | xargs wc -l`
-- Tests: 568 lines, 38 tests in 2 files. `find ./test -name '*.test.ts' | xargs wc -l` and `grep -cE '^\s*(it|test)\(' test/*.test.ts`
+- App: 1438 lines (`server.ts` 1061, `smoke.ts` 240, `scripts/pack-probe.mjs` 129, `index.ts` 8). `find . -type f \( -name '*.ts' -o -name '*.mjs' \) -not -path './node_modules/*' -not -path './dist/*' -not -path './test/*' | xargs wc -l`
+- Tests: 994 lines, 74 tests in 2 files. `find ./test -name '*.test.ts' | xargs wc -l` for the lines; the test count is vitest's. The grep `grep -cE '^\s*(it|test)\(' test/*.test.ts` reads 69, because the per-tool unknown-argument cases are generated in a loop — one `it(` for six tests.
 
-What the offline suite covers, by layer: `test/server.test.ts` runs a real MCP client and server over an in-memory transport with fetch stubbed, and asserts the request grammar (filter_object shape, LIKE escaping, uppercasing, string-coerced values, limit+1 probe row, query-param key, User-Agent, abort signal), the response normalization (field map, per-statute penalty sums, 204-empty as zero matches, error envelopes rejected), the retry policy (3 attempts on 5xx, none on 4xx or a non-JSON body), the response cache, and the data_currency spec. `test/no-http-stack.test.ts` pins the dependency surface: stdio transport only, one runtime dependency. The live smoke and `verify:pack` cover what mocks cannot: the DOL contract and the published npm artifact.
+What the offline suite covers, by layer: `test/server.test.ts` runs a real MCP client and server over an in-memory transport with fetch stubbed, and asserts the request grammar (filter_object shape, LIKE escaping and case variants, string-coerced values and array values, inclusive date bounds, limit+1 probe row, query-param key, User-Agent, abort signal), the argument contract (unknown keys refused before any network call, one case per tool), the response normalization (field map, per-statute penalty sums, the repeat/willful flag, 204-empty as zero matches, error envelopes rejected), the retry policy (3 attempts on 5xx, none on 4xx or a non-JSON body), the environment knobs (a bad value falls back to the documented default rather than killing the retry loop or freezing the cache), the response cache including LRU eviction, and the data_currency spec. `test/no-http-stack.test.ts` pins the dependency surface: stdio transport only, one runtime dependency. The live smoke and `verify:pack` cover what mocks cannot: the DOL contract and the published npm artifact.
 
-Mutation probe, 2026-09-11: dropping the `%` escape from `escapeLike` in `server.ts` failed exactly one test, `employer_violations > escapes LIKE metacharacters in the employer term so they match literally` (37 of 38 passed). Restored after the run.
+Mutation probes, 2026-09-14, each restored after the run:
 
-The 9 call-count assertions in the suite were audited 2026-09-11 and all kept: each one pins a contract (no network call before validation passes, retry counts, cache dedupe), not that a function was invoked. Policy: assert behavior and payloads, not that a function was called.
+| Mutation in `server.ts` | Reddened |
+|---|---|
+| `shiftIsoDate(after, -1)` → `0` (inclusive date bound) | 3 tests, 47 of 50 passing at the time |
+| bad-value branch of `envInt` → `false` | 4 tests, including "no tool result can carry the text 'Error: undefined'" |
+| drop the `validateArgs` call | 9 of the 11 unknown-argument tests; the coverage assertion and the accepts-declared-arguments test stay green, correctly |
+| drop `top_cases`' NAICS prefix filter | both `top_cases` filter tests |
+| `FLAG_SEARCHES.W` → `["W"]` | the willful-includes-RW test |
+| `capped: rows.length >= cap` → `> cap` | the capped test |
+| `cacheMax()` → `Infinity` | the LRU eviction test |
+| `violations_by_state`' truncation note → `undefined` | the has_more note test |
+
+Earlier probe, 2026-09-11: dropping the `%` escape from `escapeLike` failed exactly one test, `employer_violations > escapes LIKE metacharacters in the employer term so they match literally` (37 of 38 passed).
+
+One note on running probes here: `npx vitest run --reporter=basic` exits 1 without running anything on vitest 4, so a probe wired that way reports every mutation as red whether or not the suite noticed. Use the default reporter and read the per-test FAIL lines.
+
+The call-count assertions — 23 in the source as of 2026-09-14, up from the 9 audited on 2026-09-11 — were each kept for pinning a contract, not for recording that a function ran: no network call before validation passes (the largest group, one per tool since arguments are now checked up front), retry counts under the attempt ceiling, cache dedupe and LRU eviction. Policy: assert behavior and payloads, not that a function was called.
 
 ## AI assistance
 
