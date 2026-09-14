@@ -1204,6 +1204,52 @@ describe("response cache", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
+  it("evicts on total ROWS too, not only on entry count (WW-M)", async () => {
+    // DOL_CACHE_MAX bounds ENTRIES. That stopped bounding memory when
+    // back_wages_summary dropped its `fields` projection: one entry became up
+    // to max_cases+1 WHOLE rows (~2.8 KB each), so 300 entries is a ~840 MB
+    // ceiling. The entry count here is deliberately far from binding.
+    process.env.DOL_CACHE_MAX = "300";
+    const bigPage = (tag: string) =>
+      jsonResponse(Array.from({ length: 10_000 }, (_, i) => ({ case_id: `${tag}-${i}`, bw_atp_amt: "1" })));
+
+    fetchMock.mockResolvedValueOnce(bigPage("a"));
+    await call("employer_violations", { employer: "alpha" }); // 10k rows cached
+    fetchMock.mockResolvedValueOnce(bigPage("b"));
+    await call("employer_violations", { employer: "bravo" }); // 20k, at the ceiling
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Still both cached: 20,000 is the ceiling, not past it.
+    await call("employer_violations", { employer: "alpha" });
+    await call("employer_violations", { employer: "bravo" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockResolvedValueOnce(bigPage("c"));
+    await call("employer_violations", { employer: "charlie" }); // 30k -> over, evict oldest
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    // charlie is the newest and survives; the oldest by LRU order was refetched.
+    await call("employer_violations", { employer: "charlie" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    fetchMock.mockResolvedValueOnce(bigPage("a"));
+    await call("employer_violations", { employer: "alpha" });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("never evicts the entry it just wrote, however large (WW-M)", async () => {
+    // A single answer bigger than the row ceiling must still be served from
+    // cache: dropping it would make the cache a miss-generator for exactly the
+    // queries it exists to spare.
+    process.env.DOL_CACHE_MAX = "300";
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(Array.from({ length: 25_000 }, (_, i) => ({ case_id: `x-${i}` }))),
+    );
+    await call("employer_violations", { employer: "whale" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await call("employer_violations", { employer: "whale" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not cache a failure", async () => {
     fetchMock.mockResolvedValue(textResponse("boom", { ok: false, status: 500 }));
     const bad: any = await call("employer_violations", { employer: "acme" });

@@ -271,13 +271,30 @@ function cacheGet(key: string): Row[] | undefined {
   return hit.rows;
 }
 
+/**
+ * Total cached ROWS across all entries, the second ceiling.
+ *
+ * Entry count alone stopped bounding memory when back_wages_summary dropped its
+ * `fields` projection: one entry is now up to max_cases+1 WHOLE WHISARD rows, a
+ * row is ~2.8 KB across 110 columns (measured 2026-09-14), so a single default
+ * aggregate entry is ~2.8 MB of JSON and DOL_CACHE_MAX's default of 300 put the
+ * ceiling near 840 MB -- in a stdio process whose whole job is to stay up.
+ * 20,000 rows is ~56 MB of JSON, and twenty full aggregate answers.
+ */
+const CACHE_MAX_ROWS = 20_000;
+
 function cacheSet(key: string, rows: Row[]): void {
   if (cacheTtlMs() <= 0) return;
   cache.set(key, { at: Date.now(), rows });
   const max = cacheMax();
-  while (cache.size > max) {
+  let rowTotal = 0;
+  for (const entry of cache.values()) rowTotal += entry.rows.length;
+  // Evict on whichever ceiling bites first, but never the entry just written:
+  // a single oversized answer is still served from cache within its own call.
+  while (cache.size > max || (cache.size > 1 && rowTotal > CACHE_MAX_ROWS)) {
     const oldest = cache.keys().next();
     if (oldest.done) break;
+    rowTotal -= cache.get(oldest.value)?.rows.length ?? 0;
     cache.delete(oldest.value);
   }
 }
