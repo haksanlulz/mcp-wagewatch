@@ -180,7 +180,8 @@ describe("employer_violations", () => {
     expect(url.origin + url.pathname).toBe("https://apiprod.dol.gov/v4/get/WHD/enforcement/json");
     const filter = JSON.parse(url.searchParams.get("filter_object")!);
     // DOL's LIKE is case-sensitive and WHISARD stores names mixed-case, so the
-    // term rides in every case variant across both name columns.
+    // term rides in three case variants across both name columns. Three, not
+    // all of them — internal capitals are the residue, named in the answer.
     expect(filter).toEqual({
       or: [
         { field: "trade_nm", operator: "like", value: "%acme%" },
@@ -295,6 +296,49 @@ describe("employer_violations", () => {
     for (const v of values) {
       expect(v.slice(1, -1)).not.toMatch(/(^|[^\\])[%_]/); // no unescaped wildcard inside
     }
+  });
+
+  it("a zero-result name search says the case variants are three, not all of them", async () => {
+    // Three variants close a name stored as typed, uppercased or title-cased.
+    // They do NOT close internal capitals — "ABC Plumbing", "JBS USA",
+    // "McDonald's" — because LIKE has no case-insensitive form and DOL exposes
+    // no `ilike`. That residue arrives as count 0, which on this dataset reads
+    // as "no wage theft here", so the empty answer has to name it.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    const body = payload(await call("employer_violations", { employer: "abc plumbing" }));
+    expect(body.count).toBe(0);
+    expect(String(body.note)).toMatch(/case-SENSITIVE/i);
+    expect(String(body.note)).toContain("ABC Plumbing");
+    expect(String(body.note)).toMatch(/retry/i);
+  });
+
+  it("a name search that found cases carries no retry hint", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON] }));
+    const body = payload(await call("employer_violations", { employer: "tyson" }));
+    expect(body.count).toBe(1);
+    expect(String(body.note ?? "")).not.toMatch(/retry/i);
+  });
+
+  it("a zero-result state query carries no retry hint: only a name can hit the case problem", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    const body = payload(await call("violations_by_state", { state: "NY" }));
+    expect(body.count).toBe(0);
+    expect(String(body.note ?? "")).not.toMatch(/capitalization/i);
+  });
+
+  it("both name-searching tools state the case caveat, in one shared string", async () => {
+    const { tools } = await client.listTools();
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+    const descs = ["employer_violations", "back_wages_summary"].map(
+      (n) => (byName[n].inputSchema as any).properties.employer.description as string,
+    );
+    for (const d of descs) {
+      expect(d).toContain("case-sensitive");
+      expect(d).toContain("ABC Plumbing");
+    }
+    // One suffix across both, so the caveat cannot drift between them.
+    const suffixes = descs.map((d) => d.slice(d.indexOf(" Matching is case-sensitive")));
+    expect(new Set(suffixes).size).toBe(1);
   });
 
   it("AND-combines the name filter with a state filter", async () => {
@@ -445,6 +489,24 @@ describe("back_wages_summary", () => {
     expect(body.total_civil_penalties).toBe(1750); // 1000 flsa + 750 the list never named
     // No projection at all: a `fields` list is what made the divergence possible.
     expect(lastUrl().searchParams.get("fields")).toBeNull();
+  });
+
+  it("a $0 total for a name that matched nothing says why it might be zero", async () => {
+    // The most citable thing this tool produces is a dollar figure, and $0 is
+    // the one a reader turns into "this employer has no wage-theft history".
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    const body = payload(await call("back_wages_summary", { employer: "abc plumbing" }));
+    expect(body.case_count).toBe(0);
+    expect(body.total_back_wages).toBe(0);
+    expect(String(body.note)).toMatch(/case-SENSITIVE/i);
+    expect(String(body.note)).toMatch(/retry/i);
+
+    // A state-only query that came back empty is a different fact, and does not
+    // get the name caveat.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
+    const byState = payload(await call("back_wages_summary", { state: "WY" }));
+    expect(byState.case_count).toBe(0);
+    expect(String(byState.note)).not.toMatch(/capitalization/i);
   });
 
   it("an exact-max_cases total is not called a floor", async () => {

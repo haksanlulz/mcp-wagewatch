@@ -545,6 +545,13 @@ function escapeLike(term: string): string {
  *
  * Each variant is derived from the RAW term and escaped afterwards, so the
  * metacharacter escaping cannot be bypassed by case-folding an escape sequence.
+ *
+ * THREE VARIANTS ARE NOT EVERY VARIANT, and the gap is the caller's to know
+ * about. A name stored with internal capitals — `ABC Plumbing`, `JBS USA`,
+ * `McDonald's` — matches none of the three unless the term is typed in the
+ * stored casing, because LIKE has no case-insensitive form and DOL exposes no
+ * `ilike`. Nothing here can close that, so a zero-result name search says so in
+ * its own answer (CASE_RETRY_HINT) rather than presenting as a clean record.
  */
 function likeVariants(term: string): string[] {
   const title = term.replace(/\S+/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
@@ -558,7 +565,8 @@ function likeVariants(term: string): string[] {
 
 /**
  * Build a name filter that matches the term against trade_nm OR legal_name, in
- * every case variant. LIKE metacharacters are escaped so a stray `%`/`_` in the
+ * the three case variants above — not in every case variant, which LIKE cannot
+ * do. LIKE metacharacters are escaped so a stray `%`/`_` in the
  * input matches literally instead of acting as a wildcard. The widest form is a
  * 6-way `or` (2 fields x 3 variants); DOL's filter engine accepts it, alone and
  * nested inside an `and` beside a state filter (both verified live 2026-09-14).
@@ -573,6 +581,22 @@ function nameFilter(term: string): FilterObject {
   return { or: nodes };
 }
 
+/**
+ * What a zero-result NAME search has to say for itself.
+ *
+ * The three case variants cover a name stored as typed, uppercased or
+ * title-cased, and miss one stored with internal capitals. That residue is
+ * invisible from the outside — it arrives as `count: 0`, which on this dataset
+ * reads as "no wage theft here" — so the one place it can be named is the empty
+ * answer itself. A state or date query does not carry this note; only a name
+ * search can hit the case problem.
+ */
+const CASE_RETRY_HINT =
+  "No case matched this name. DOL's name matching is case-SENSITIVE and WHISARD stores names mixed-case; " +
+  "this search already tried the term as typed, uppercased and title-cased. A name stored with internal " +
+  "capitals (\"ABC Plumbing\", \"JBS USA\", \"McDonald's\") needs that exact capitalization, so retry in the " +
+  "stored spelling, or with a shorter distinctive fragment, before reading this as no record.";
+
 // ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
@@ -585,6 +609,16 @@ const FOUND_AFTER_DESC =
 const FOUND_BEFORE_DESC =
   "Only cases whose findings ended on or before this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.";
 
+// Likewise one string for the name caveat, shared by the two tools that search
+// by name. DOL's LIKE is case-sensitive, this server tries three case variants,
+// and a name stored with internal capitals still needs its own spelling — a
+// caller who does not know that reads count 0 as a clean record.
+const EMPLOYER_DESC_SUFFIX =
+  " Matching is case-sensitive on DOL's side: the term is tried as typed, uppercased and title-cased, so a " +
+  "name stored with internal capitals (\"ABC Plumbing\", \"JBS USA\") needs that exact capitalization. If " +
+  "nothing matches, retry in the stored spelling or with a shorter distinctive fragment before concluding " +
+  "there are no cases.";
+
 const TOOLS: Tool[] = [
   {
     name: "employer_violations",
@@ -595,7 +629,9 @@ const TOOLS: Tool[] = [
       properties: {
         employer: {
           type: "string",
-          description: "Employer name or fragment to search for (e.g. \"tyson\", \"golden gate restaurant\").",
+          description:
+            "Employer name or fragment to search for (e.g. \"tyson\", \"golden gate restaurant\")." +
+            EMPLOYER_DESC_SUFFIX,
         },
         state: {
           type: "string",
@@ -620,7 +656,10 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        employer: { type: "string", description: "Employer name or fragment to search for." },
+        employer: {
+          type: "string",
+          description: "Employer name or fragment to search for." + EMPLOYER_DESC_SUFFIX,
+        },
         state: { type: "string", description: "2-letter state code (e.g. \"CA\")." },
         max_cases: {
           type: "integer",
@@ -791,7 +830,11 @@ async function employerViolations(args: Row): Promise<unknown> {
     },
     count: rows.length,
     has_more: hasMore,
-    note: hasMore ? `More cases match than the ${limit} shown (largest back wages first); raise limit or narrow the query.` : undefined,
+    note: hasMore
+      ? `More cases match than the ${limit} shown (largest back wages first); raise limit or narrow the query.`
+      : rows.length === 0
+        ? CASE_RETRY_HINT
+        : undefined,
     cases: rows.map(normalizeCase),
   };
 }
@@ -936,7 +979,10 @@ async function backWagesSummary(args: Row): Promise<unknown> {
     note:
       "Aggregated client-side over matching cases (WHD data is one row per compliance action). " +
       "total_civil_penalties is the sum of statute-level civil money penalties. " +
-      "capped=true means results hit max_cases and the totals are a floor.",
+      "capped=true means results hit max_cases and the totals are a floor." +
+      // A $0 total reads as an employer with no wage-theft history, which is the
+      // most citable thing this tool produces and the worst thing to get wrong.
+      (employer && rows.length === 0 ? " " + CASE_RETRY_HINT : ""),
   };
 }
 
