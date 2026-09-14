@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer, clearDolCache } from "../server.js";
+import { createServer, clearDolCache, resetEnvWarnings } from "../server.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures: real WHISARD (WHD/enforcement) column names and response envelope.
@@ -92,7 +92,13 @@ function payload(result: any) {
 
 // The response cache lives for the process; without this a value cached by one
 // test is served to the next and the suite becomes order-dependent.
-beforeEach(() => clearDolCache());
+beforeEach(() => {
+  clearDolCache();
+  // The bad-env warning is emitted once per distinct value for the life of the
+  // process; without this reset, whether a test SEES the warning depends on
+  // which test ran first.
+  resetEnvWarnings();
+});
 
 beforeEach(async () => {
   fetchMock = vi.fn();
@@ -110,6 +116,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   delete process.env.DOL_API_KEY;
+  // Tuning knobs are read from the environment per call; a value left behind by
+  // one test would silently retune the next.
+  delete process.env.DOL_HTTP_ATTEMPTS;
+  delete process.env.DOL_CACHE_TTL_MS;
+  delete process.env.DOL_CACHE_MAX;
 });
 
 // ---------------------------------------------------------------------------
@@ -643,6 +654,88 @@ describe("wagewatch 1.1.0", () => {
     const raw = lastUrl().searchParams.get("filter_object")!;
     expect(raw).toContain('"value":["R","RW"]');
     expect(JSON.parse(raw).value).toEqual(["R", "RW"]);
+  });
+});
+
+describe("environment knobs", () => {
+  // Each of these is Number(process.env.X ?? default) with nothing between the
+  // operator's typo and the code. DOL_HTTP_ATTEMPTS=abc made HTTP_ATTEMPTS NaN,
+  // so `attempt < NaN` was false on the first pass, the retry loop never ran,
+  // and the function threw its uninitialised `last` -- rendering, through a real
+  // MCP call, the text "Error: undefined". A NaN cache TTL is worse still: this
+  // server's stated MUST NEVER is stale data presented as current, and a
+  // never-expiring cache is exactly that.
+  it("a non-numeric DOL_HTTP_ATTEMPTS falls back to the default instead of killing the loop", async () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.DOL_HTTP_ATTEMPTS = "abc";
+    fetchMock.mockResolvedValue(textResponse("upstream boom", { ok: false, status: 500 }));
+
+    const res: any = await call("employer_violations", { employer: "acme" });
+    expect(fetchMock).toHaveBeenCalledTimes(3); // the documented default
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("500");
+    expect(res.content[0].text).not.toContain("undefined");
+    expect(warn.mock.calls.flat().join(" ")).toContain("DOL_HTTP_ATTEMPTS");
+  });
+
+  it("DOL_HTTP_ATTEMPTS=0 cannot produce a request that was never attempted", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.DOL_HTTP_ATTEMPTS = "0";
+    fetchMock.mockResolvedValue(jsonResponse([]));
+
+    const res: any = await call("employer_violations", { employer: "acme" });
+    expect(res.isError).toBeFalsy();
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("no tool result can carry the text 'Error: undefined'", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const bad of ["abc", "0", "-4", "2.5", ""]) {
+      for (const knob of ["DOL_HTTP_ATTEMPTS", "DOL_CACHE_TTL_MS", "DOL_CACHE_MAX"]) {
+        clearDolCache();
+        process.env[knob] = bad;
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        const res: any = await call("top_cases", { limit: 1 });
+        expect(res.content[0].text).not.toContain("Error: undefined");
+        delete process.env[knob];
+      }
+    }
+  });
+
+  it("a valid DOL_HTTP_ATTEMPTS is still honoured", async () => {
+    process.env.DOL_HTTP_ATTEMPTS = "2";
+    fetchMock.mockResolvedValue(textResponse("upstream boom", { ok: false, status: 500 }));
+    const res: any = await call("employer_violations", { employer: "acme" });
+    expect(res.isError).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a non-numeric DOL_CACHE_TTL_MS still expires an entry at the documented default", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.DOL_CACHE_TTL_MS = "forever";
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    const DAY = 24 * 60 * 60 * 1000;
+
+    const t0 = Date.now();
+    await call("employer_violations", { employer: "acme" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Only Date.now is faked: the throttle's setTimeout must keep running.
+    const now = vi.spyOn(Date, "now").mockReturnValue(t0 + DAY - 60_000);
+    await call("employer_violations", { employer: "acme" });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // still inside the default day
+
+    now.mockReturnValue(t0 + DAY + 60_000);
+    await call("employer_violations", { employer: "acme" });
+    expect(fetchMock).toHaveBeenCalledTimes(2); // expired, refetched
+  });
+
+  it("DOL_CACHE_TTL_MS=0 still disables the cache", async () => {
+    process.env.DOL_CACHE_TTL_MS = "0";
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    await call("employer_violations", { employer: "acme" });
+    await call("employer_violations", { employer: "acme" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

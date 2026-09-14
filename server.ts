@@ -139,7 +139,51 @@ class HttpError extends Error {
 // answers identically however many times it is asked.
 class PermanentError extends Error {}
 
-const HTTP_ATTEMPTS = Number(process.env.DOL_HTTP_ATTEMPTS ?? 3);
+/**
+ * Read an integer tuning knob from the environment, or fall back to the
+ * documented default and say so on stderr.
+ *
+ * `Number(process.env.X ?? default)` put nothing between an operator's typo and
+ * the code. DOL_HTTP_ATTEMPTS=abc made the attempt ceiling NaN, so `attempt <
+ * NaN` was false on the first pass, the retry loop never ran, and withRetry
+ * threw its uninitialised `last` — which a real MCP call rendered as the text
+ * "Error: undefined". DOL_HTTP_ATTEMPTS=0 reached the same dead loop. A NaN
+ * cache TTL is worse than either: this server's MUST NEVER is stale data
+ * presented as current, and `Date.now() - at > NaN` is false forever, so the
+ * cache would never expire.
+ *
+ * Read at USE time, not at import: a module-level const cannot be exercised by a
+ * test without reloading the module, and a knob nothing can test is a knob
+ * nothing has tested. The warning is emitted once per distinct bad value so a
+ * long-lived server does not repeat itself, and it goes to stderr because stdout
+ * is the MCP transport.
+ */
+const warnedEnv = new Set<string>();
+function envInt(name: string, fallback: number, min: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min) {
+    const seen = `${name}=${raw}`;
+    if (!warnedEnv.has(seen)) {
+      warnedEnv.add(seen);
+      console.error(
+        `mcp-wagewatch: ignoring ${name}=${JSON.stringify(raw)} (expected a whole number >= ${min}); using ${fallback}.`,
+      );
+    }
+    return fallback;
+  }
+  return n;
+}
+
+/** Exported for tests: the warn-once memo must not leak between cases. */
+export function resetEnvWarnings(): void {
+  warnedEnv.clear();
+}
+
+const DEFAULT_HTTP_ATTEMPTS = 3;
+/** Total attempts per request, >= 1 (1 disables retrying). */
+const httpAttempts = () => envInt("DOL_HTTP_ATTEMPTS", DEFAULT_HTTP_ATTEMPTS, 1);
 const RETRY_BACKOFF_MS = [500, 2000];
 const RETRY_DEADLINE_MS = 40_000;
 const HTTP_TIMEOUT_MS = 15_000;
@@ -152,13 +196,14 @@ function isRetryable(e: unknown): boolean {
 
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   const started = Date.now();
+  const attempts = httpAttempts(); // read once: the ceiling cannot move mid-loop
   let last: unknown;
-  for (let attempt = 0; attempt < HTTP_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       return await fn();
     } catch (e) {
       last = e;
-      if (attempt === HTTP_ATTEMPTS - 1 || !isRetryable(e)) break;
+      if (attempt === attempts - 1 || !isRetryable(e)) break;
       const backoff = RETRY_BACKOFF_MS[attempt] ?? 2000;
       if (Date.now() - started + backoff + HTTP_TIMEOUT_MS > RETRY_DEADLINE_MS) break;
       await new Promise((r) => setTimeout(r, backoff));
@@ -208,15 +253,20 @@ function stringifyFilterValues(node: FilterObject): FilterObject {
 // Keyed on the query params, deliberately NOT on the request URL: the API key
 // rides in the query string (see dolGetOnce), and a cache key built from the URL
 // would put the key in a Map that error messages and debug dumps can reach.
-const CACHE_TTL_MS = Number(process.env.DOL_CACHE_TTL_MS ?? 24 * 60 * 60 * 1000);
-const CACHE_MAX = Number(process.env.DOL_CACHE_MAX ?? 300);
+const DEFAULT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_CACHE_MAX = 300;
+/** Entry lifetime in ms; 0 disables the cache. Validated (see envInt). */
+const cacheTtlMs = () => envInt("DOL_CACHE_TTL_MS", DEFAULT_CACHE_TTL_MS, 0);
+/** Entries kept before the oldest is evicted, >= 1. */
+const cacheMax = () => envInt("DOL_CACHE_MAX", DEFAULT_CACHE_MAX, 1);
 const cache = new Map<string, { at: number; rows: Row[] }>();
 
 function cacheGet(key: string): Row[] | undefined {
-  if (CACHE_TTL_MS <= 0) return undefined;
+  const ttl = cacheTtlMs();
+  if (ttl <= 0) return undefined;
   const hit = cache.get(key);
   if (!hit) return undefined;
-  if (Date.now() - hit.at > CACHE_TTL_MS) {
+  if (Date.now() - hit.at > ttl) {
     cache.delete(key);
     return undefined;
   }
@@ -226,9 +276,10 @@ function cacheGet(key: string): Row[] | undefined {
 }
 
 function cacheSet(key: string, rows: Row[]): void {
-  if (CACHE_TTL_MS <= 0) return;
+  if (cacheTtlMs() <= 0) return;
   cache.set(key, { at: Date.now(), rows });
-  while (cache.size > CACHE_MAX) {
+  const max = cacheMax();
+  while (cache.size > max) {
     const oldest = cache.keys().next();
     if (oldest.done) break;
     cache.delete(oldest.value);

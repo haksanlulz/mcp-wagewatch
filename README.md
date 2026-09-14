@@ -94,6 +94,16 @@ setx DOL_API_KEY your-key-here        # Windows (new shells)
 
 Without the key the tools return an error naming the variable and the key-signup URL. The key is never logged.
 
+### Optional tuning
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `DOL_HTTP_ATTEMPTS` | `3` | Total attempts per request (retries 429/5xx/transport). `1` disables retrying. |
+| `DOL_CACHE_TTL_MS` | `86400000` (a day) | Lifetime of a cached response. `0` disables the cache. |
+| `DOL_CACHE_MAX` | `300` | Cached responses kept before the oldest is evicted. |
+
+Each is read per use and validated: a value that is not a whole number in range is ignored, with a one-line note on stderr, and the default applies. A NaN attempt ceiling used to skip the request loop entirely and surface as `Error: undefined`, and a NaN TTL is a cache that never expires — which is this server's stated worst failure.
+
 ## Response shape
 
 `employer_violations` with `{ "employer": "tyson", "state": "AR", "limit": 1 }` returns this shape. Values are illustrative (test-fixture data, not a live capture — see the caveats below):
