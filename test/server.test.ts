@@ -396,12 +396,16 @@ describe("back_wages_summary", () => {
   it("flags a total that hit max_cases as capped, because it is then a floor", async () => {
     // The aggregate form of this server's MUST NEVER: a truncated sum reads as
     // an employer's whole wage-theft history unless the answer says otherwise.
-    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
+    // Three rows come back for max_cases 2: the third is the probe row, and it
+    // is what makes `capped` a statement about the data rather than about the
+    // page being full.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, ROW_SMALL, ROW_SMALL] }));
     const body = payload(await call("back_wages_summary", { employer: "tyson", max_cases: 2 }));
-    expect(body.case_count).toBe(2);
+    expect(body.case_count).toBe(2); // the probe row is not summed
+    expect(body.total_back_wages).toBe(155000.5); // 150000.5 + 5000, not 160000.5
     expect(body.capped).toBe(true);
     expect(String(body.note)).toContain("the totals are a floor");
-    expect(lastUrl().searchParams.get("limit")).toBe("2");
+    expect(lastUrl().searchParams.get("limit")).toBe("3"); // max_cases + 1
   });
 
   it("does not flag a total that came in under max_cases", async () => {
@@ -409,6 +413,21 @@ describe("back_wages_summary", () => {
     const body = payload(await call("back_wages_summary", { employer: "tyson", max_cases: 3 }));
     expect(body.case_count).toBe(2);
     expect(body.capped).toBe(false);
+  });
+
+  it("an exact-max_cases total is not called a floor", async () => {
+    // rows.length >= cap is true when the true match count is exactly cap, so
+    // an EXACT total was published under a note saying the totals are a floor.
+    // This is the tool whose output is a dollar figure a caseworker pastes into
+    // a letter, and the direction of that error is the one that makes a correct
+    // number unciteable. Every list tool got the limit+1 probe row for this;
+    // this one did not.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
+    const body = payload(await call("back_wages_summary", { employer: "tyson", max_cases: 2 }));
+    expect(body.case_count).toBe(2);
+    expect(body.capped).toBe(false);
+    // The whole total is present, so it is citable as a total.
+    expect(body.total_back_wages).toBe(155000.5);
   });
 });
 

@@ -898,7 +898,13 @@ async function backWagesSummary(args: Row): Promise<unknown> {
     "findings_end_date",
     ...CMP_AMOUNT_FIELDS,
   ];
-  const rows = await dolGet({ limit: cap, filter, fields });
+  // cap + 1, the same probe row every list tool uses for has_more. Without it
+  // `capped` is true whenever the page is full, so a total whose true match
+  // count is EXACTLY max_cases was published under a note calling it a floor —
+  // on the one tool whose output is a dollar figure a caseworker cites. The
+  // extra row is fetched and then dropped, never summed.
+  const fetched = await dolGet({ limit: cap + 1, filter, fields });
+  const rows = fetched.slice(0, cap);
 
   let totalBackWages = 0;
   let totalEmployees = 0;
@@ -918,7 +924,7 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   return {
     query: { employer: employer ?? null, state },
     case_count: rows.length,
-    capped: rows.length >= cap,
+    capped: fetched.length > cap,
     total_back_wages: Math.round(totalBackWages * 100) / 100,
     total_employees_affected: totalEmployees,
     total_civil_penalties: Math.round(totalPenalties * 100) / 100,
