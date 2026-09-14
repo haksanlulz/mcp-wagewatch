@@ -1,0 +1,74 @@
+{
+  "manifest_version": "0.3",
+  "name": "mcp-wagewatch",
+  "display_name": "WageWatch — DOL wage and hour enforcement",
+  "version": "1.1.0",
+  "description": "Employer wage-theft history from the U.S. DOL Wage and Hour Division enforcement dataset: back wages owed, civil penalties, employees affected, and the repeat/willful violator flag.",
+  "long_description": "Wraps the WHISARD compliance-action dataset (every concluded WHD compliance action since FY2005) served from the DOL Open Data API. Built for worker-justice nonprofits, legal-aid intake and union researchers: search an employer by name, aggregate what they were made to pay, list the largest cases in a state or industry, and pull the per-statute breakdown of one case.\n\nEvery answer states its vintage. WHD publishes concluded investigations on a lag, so these are historical enforcement records rather than an employer's present compliance state, and an empty result means no concluded published case was found — not that none exists.\n\nRead-only: the server queries the public DOL API and sends nothing anywhere.",
+  "author": {
+    "name": "Abishai James",
+    "url": "https://github.com/haksanlulz"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/haksanlulz/mcp-wagewatch.git"
+  },
+  "homepage": "https://github.com/haksanlulz/mcp-wagewatch",
+  "documentation": "https://github.com/haksanlulz/mcp-wagewatch#readme",
+  "support": "https://github.com/haksanlulz/mcp-wagewatch/issues",
+  "license": "MIT",
+  "keywords": ["dol", "wage-and-hour", "whisard", "wage-theft", "back-wages", "labor", "enforcement", "civic-data"],
+  "privacy_policies": ["https://www.dol.gov/general/privacynotice"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "DOL_API_KEY": "${user_config.api_key}"
+      }
+    }
+  },
+  "user_config": {
+    "api_key": {
+      "type": "string",
+      "title": "DOL Open Data API key",
+      "description": "Free key from https://dataportal.dol.gov/registration. Every tool needs it: without one the server answers with an error naming this setting.",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "tools": [
+    {
+      "name": "employer_violations",
+      "description": "Search enforcement cases by employer name, optionally filtered to a state and a date window."
+    },
+    {
+      "name": "back_wages_summary",
+      "description": "Aggregate back wages, employees affected, civil penalties and case count for an employer and/or state."
+    },
+    {
+      "name": "violations_by_state",
+      "description": "Top cases in a state where a violation was found, optionally filtered by NAICS industry prefix."
+    },
+    {
+      "name": "top_cases",
+      "description": "The largest cases by back wages nationally, in a state, in an industry, or in a date window."
+    },
+    {
+      "name": "flagged_employers",
+      "description": "Cases carrying WHD's FLSA repeat/willful violator flag (R, W or RW)."
+    },
+    {
+      "name": "case_detail",
+      "description": "Full record for one case, including which labor statutes were cited."
+    }
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

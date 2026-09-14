@@ -19,7 +19,9 @@
     "start": "tsx index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "verify:pack": "node scripts/pack-probe.mjs"
+    "verify:pack": "node scripts/pack-probe.mjs",
+    "pack:mcpb": "node scripts/pack-mcpb.mjs",
+    "verify:mcpb": "node scripts/mcpb-probe.mjs"
   },
   "keywords": [
     "mcp",

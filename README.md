@@ -56,6 +56,16 @@ Notes:
 
 ## Install
 
+### As a bundle (no terminal)
+
+`npm run pack:mcpb` builds `haksanlulz-mcp-wagewatch-<version>.mcpb` — an [MCPB bundle](https://github.com/modelcontextprotocol/mcpb) (manifest spec 0.3). Clients that install MCPB bundles take the file directly and prompt for the DOL API key, which the manifest declares as a required, sensitive `user_config` field; nothing about the install involves editing JSON by hand.
+
+The bundle carries `dist/`, `manifest.json`, `package.json`, and the **production dependency tree** — 3,523 files, 4.4 MB, measured 2026-09-14. That makes the dependency surface a shipped payload rather than a resolution-time detail, which is what `test/no-http-stack.test.ts` bounds: one runtime dependency, stdio transport only, no HTTP transport in the executed path.
+
+`npm run verify:mcpb` packs the bundle, reads the ZIP back, confirms an independent unzip agrees, checks the manifest's version against `package.json` and that its `entry_point` is actually inside the archive, then extracts to a throwaway directory and launches the server the way `mcp_config` says to, asserting `tools/list` returns the documented six.
+
+### As an npm package
+
 Nothing to clone. Point your MCP client at it and npm fetches it on first run:
 
 ```json
@@ -153,6 +163,7 @@ npm test           # offline: vitest, fetch mocked with the documented response 
 npm run smoke      # live: one real call per tool against the DOL API (needs DOL_API_KEY; skips and exits 0 without it)
 npm run typecheck
 npm run verify:pack  # packs the tarball, installs it in a throwaway project, launches through the bin shim, speaks MCP
+npm run verify:mcpb  # packs the .mcpb bundle, extracts it cold, launches the manifest's entry_point, speaks MCP
 ```
 
 Counts, measured 2026-09-14:

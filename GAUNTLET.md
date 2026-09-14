@@ -24,6 +24,7 @@ One of four near-identical civic servers converted together on 2026-07-29 (`mcp-
 | upstream API contract | live the U.S. DOL Wage and Hour Division enforcement dataset | endpoints answer; token absence is reported, not crashed | ✅ `npm run smoke` (skips loudly without `DOL_API_KEY` (free)) |
 | public repo | a stranger clones and runs `npm test` | suite green, typecheck clean, build emits | ✅ **GitHub Actions, Node 18/20/22** (added 2026-07-29): `npm ci` → typecheck → build → test, plus a separate `package` job running `verify:pack` |
 | **npm package** | a stranger runs `npx @haksanlulz/mcp-wagewatch` having never cloned | bin shim resolves · server boots · handshake answers · tools/list is well-formed | ✅ **`npm run verify:pack`** — builds, packs, installs the tarball into a throwaway project, launches **through the bin shim**, speaks MCP. Mutation-probed against the real historical defect: restoring the `npx tsx` shebang turns it red. Wired into CI. |
+| **.mcpb bundle** | a client installs the bundle file and is prompted for the key — no terminal, no JSON block to hand-edit | archive is a readable zip · the manifest's `entry_point` is IN it · manifest version matches package.json · the key is a required, sensitive `user_config` field reaching the server through `mcp_config.env` · the extracted bundle boots and serves the six tools | ✅ **`npm run verify:mcpb`** (added 2026-09-14) — packs, reads the zip back, confirms an **independent** unzip agrees (our own reader round-tripping our own writer proves nothing about the format), extracts cold, launches the manifest's own command. Mutation-probed six ways — a not-bundled `entry_point`, a non-sensitive key, a non-required key, an emptied `mcp_config.env`, a drifting version, a manifest advertising five tools — each red with the matching message |
 | registry listing (LobeHub, Glama) | a stranger reads the README there and follows it cold | documented install produces a working server | 🔴 **NO RUNG** — the README is the consumed artifact on those sites and nothing checks it stays executable |
 
 ## §3 Invariants — scans
@@ -45,7 +46,7 @@ One of four near-identical civic servers converted together on 2026-07-29 (`mcp-
 | docs-only | none |
 | code-touch (`server.ts` / `index.ts` / `test/`) | `npm test` + `npm run typecheck` + §3 scans · **this is a public commit** |
 | behavior-change (tool names, schemas, output shape) | + `npm run smoke` with a live token + README tool table + §5 specs |
-| artifact-affecting (`package.json`, deps, shebang, tsconfig) | + **`npm run verify:pack`** |
+| artifact-affecting (`package.json`, deps, shebang, tsconfig, `manifest.json`, `scripts/`) | + **`npm run verify:pack`** + **`npm run verify:mcpb`** — two shipped artifacts, two channels |
 | release (tag / npm publish) | + the full §2 channel map + `npm run smoke` with a live token + §5 specs |
 
 **Hard gate:** a skipped rung makes the done-report say **BLOCKED**, not done. `prepublishOnly` (`build && typecheck && test`) enforces the code half mechanically. The npm channel itself is covered by `verify:pack`, which CI runs on every push.
