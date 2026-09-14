@@ -551,6 +551,63 @@ describe("violations_by_state", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a two-letter code that is not a state, on every tool that takes one (WW-N)", async () => {
+    // The shape check passed anything alphabetic, so `{st_cd eq "ZZ"}` went out
+    // as a legal filter, came back 204, and rendered as count 0 under the note
+    // that an empty result means no concluded published case was found -- the
+    // confident zero, from two wrong characters. NU-for-NV and MI-for-MN are
+    // the realistic typos; ZZ and XX are not codes at all.
+    for (const [tool, args] of [
+      ["violations_by_state", {}],
+      ["top_cases", {}],
+      ["employer_violations", { employer: "acme" }],
+      ["flagged_employers", {}],
+      ["back_wages_summary", {}],
+    ] as const) {
+      for (const bad of ["ZZ", "XX", "NU", "QQ"]) {
+        const res: any = await call(tool, { ...args, state: bad });
+        expect(res.isError, `${tool} should refuse state ${bad}`).toBe(true);
+        expect(res.content[0].text).toContain(bad);
+        expect(res.content[0].text).toMatch(/not a US state/i);
+      }
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts the whole federal code domain: 50 states, DC, and the territories (WW-N)", async () => {
+    // Source for the domain: the Census Bureau's FIPS/USPS reference
+    // https://www2.census.gov/geo/docs/reference/state.txt (STUSAB column,
+    // fetched 2026-09-14). A territory wrongly refused here would be the same
+    // silent zero one layer up, so acceptance is pinned as tightly as refusal.
+    //
+    // Driven with the key unset and one attempt, so each code is decided by
+    // normState and stops at the auth check: 57 real requests would be 57
+    // throttle gaps, and the throttle is not what this case is about.
+    delete process.env.DOL_API_KEY;
+    process.env.DOL_HTTP_ATTEMPTS = "1";
+    const codes =
+      "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY AS GU MP PR UM VI".split(
+        " ",
+      );
+    expect(codes).toHaveLength(57);
+    expect(new Set(codes).size).toBe(57);
+    for (const code of codes) {
+      const res: any = await call("violations_by_state", { state: code });
+      // Past normState, into the request path: the only complaint is the key.
+      expect(res.content[0].text, `state ${code} should be accepted`).toContain("DOL_API_KEY is not set");
+    }
+    // ...while a non-code never gets that far.
+    const bad: any = await call("violations_by_state", { state: "ZZ" });
+    expect(bad.content[0].text).toMatch(/not a US state/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("normalizes a lowercase state code rather than refusing it (WW-N)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("violations_by_state", { state: "ny" });
+    expect(lastUrl().searchParams.get("filter_object")).toContain('"NY"');
+  });
+
   it("reports has_more and the truncation note when a page is full", async () => {
     // The twin of this was pinned for employer_violations and not here, so a
     // state page of exactly `limit` rows could still read as the whole story.

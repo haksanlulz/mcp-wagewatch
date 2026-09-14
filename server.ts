@@ -455,13 +455,44 @@ function clampLimit(v: unknown, fallback: number): number {
   return Math.max(1, Math.min(MAX_PAGE, Math.floor(n)));
 }
 
+/**
+ * Every 2-letter code `st_cd` can legitimately carry: the 50 states, DC, and
+ * the US territories.
+ *
+ * Source, so this list is not a remembered one: the Census Bureau's canonical
+ * FIPS/USPS reference https://www2.census.gov/geo/docs/reference/state.txt
+ * (STUSAB column, fetched 2026-09-14) -- 57 codes, 50 states + DC + AS, GU, MP,
+ * PR, UM, VI. It is the federal code domain, NOT a measured enumeration of the
+ * values WHISARD happens to hold; a code outside it is not a place WHD can have
+ * concluded a case in, whatever the dataset contains.
+ *
+ * It is checked here rather than sent because `{st_cd eq "ZZ"}` is a legal
+ * filter that DOL answers 204, which this server renders as count 0 under the
+ * note that an empty result means no concluded published case was found -- the
+ * confident-zero shape, reached by getting two characters wrong. A caseworker
+ * who types NU for NV or MI for MN reads "no wage enforcement published here"
+ * rather than "that is not a state". Unlike the LIKE case problem this domain
+ * is closed, so the typo can be refused instead of answered.
+ */
+const STATE_CODES = new Set(
+  ("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND " +
+    "OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY AS GU MP PR UM VI").split(" "),
+);
+
 /** Validate + normalize a 2-letter state code, or throw. */
 function normState(v: unknown): string {
   const s = str(v);
   if (!s || !/^[A-Za-z]{2}$/.test(s)) {
     throw new Error(`state must be a 2-letter code (e.g. "NY", "CA"); got: ${JSON.stringify(v)}`);
   }
-  return s.toUpperCase();
+  const code = s.toUpperCase();
+  if (!STATE_CODES.has(code)) {
+    throw new Error(
+      `state ${JSON.stringify(code)} is not a US state, DC, or a US territory. Nothing was queried -- an ` +
+        'unknown code is a legal filter that answers count 0, which reads as "no enforcement published here".',
+    );
+  }
+  return code;
 }
 
 /** Validate an optional ISO date (YYYY-MM-DD) that is also a real date, or throw. */
