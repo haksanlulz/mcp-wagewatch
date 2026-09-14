@@ -1018,6 +1018,25 @@ function newestFindingsDate(node: unknown): string | null {
   return max;
 }
 
+/**
+ * Strip the API key out of anything on its way to a caller.
+ *
+ * The key rides the QUERY STRING — the v4 API 401s the header form, verified
+ * live — so "the token never enters the query string" is not a property this
+ * code can have. The property it can have, and the one that actually protects
+ * the key, is that no message leaving this module carries the request URL or
+ * the key itself. This module never builds such a message, but it does surface
+ * other people's: an upstream error body that echoes the request, or a
+ * transport error whose message quotes the URL it was fetching. Both paths run
+ * through the one catch below, so the scrub belongs there.
+ */
+function redactSecrets(message: string): string {
+  const key = process.env.DOL_API_KEY?.trim();
+  let out = message.replace(/([?&]X-API-KEY=)[^&\s"'<>]*/gi, "$1[redacted]");
+  if (key) out = out.split(key).join("[redacted]");
+  return out;
+}
+
 function withDataCurrency(result: unknown): unknown {
   const currency = {
     newest_findings_end_date: newestFindingsDate(result),
@@ -1051,7 +1070,7 @@ export function createServer(): Server {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
-        content: [{ type: "text", text: `Error: ${message}` }],
+        content: [{ type: "text", text: `Error: ${redactSecrets(message)}` }],
         isError: true,
       };
     }

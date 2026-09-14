@@ -6,7 +6,7 @@ One of four near-identical civic servers converted together on 2026-07-29 (`mcp-
 
 ## §1 Oracle — done-definition
 
-- **It is**: a stdio MCP server over the U.S. DOL Wage and Hour Division enforcement dataset. Tools — `employer_violations`, `back_wages_summary`, `violations_by_state`, `case_detail`. It exists so that employer wage-theft history, back wages owed, civil penalties and affected-employee counts are answered from WHISARD rather than recalled.
+- **It is**: a stdio MCP server over the U.S. DOL Wage and Hour Division enforcement dataset. Tools — `employer_violations`, `back_wages_summary`, `violations_by_state`, `top_cases`, `flagged_employers`, `case_detail`. Six, which is what `test/server.test.ts` *"lists exactly the six documented tools"* asserts and what both channel probes check; this line named four from the 1.1.0 release until 2026-09-14. It exists so that employer wage-theft history, back wages owed, civil penalties and affected-employee counts are answered from WHISARD rather than recalled.
 - **DONE means**: (a) an MCP client sees every tool and a real lookup round-trips over stdio; (b) results carry the underlying values so a caller can cite rather than trust; (c) every upstream request is serialized, spaced, timed out, and identifies itself.
 - **Non-goals**: predicting enforcement outcomes, naming individuals, any claim about a current employer relationship.
 
@@ -31,11 +31,11 @@ One of four near-identical civic servers converted together on 2026-07-29 (`mcp-
 
 | Invariant | Scan | Status |
 |---|---|---|
-| Concurrent calls cannot breach the throttle | vitest: *"serializes concurrent requests through the throttle queue"* | ✅ present |
-| Spacing is start-to-start, not gap+latency | vitest: *"spaces request STARTS by the throttle gap"* | ✅ present |
+| Concurrent calls cannot breach the throttle | vitest: *"serializes concurrent requests through the throttle queue"* | ✅ **written 2026-09-14**, mutation-probed (`queue.then(fn, fn)` → `fn()` turns it red). ⚠️ This row read ✅ present from 2026-07-29 while **no such test existed in `test/`** — the invariant held, the scan was imaginary |
+| Spacing is start-to-start, not gap+latency | vitest: *"spaces request STARTS by the throttle gap"* | ✅ **written 2026-09-14**, mutation-probed (`THROTTLE_MS` → 0 turns it red). Same correction as the row above |
 | One hung request cannot wedge later calls | `AbortSignal.timeout(15_000)` on every fetch | ✅ present (assertion via the header test) |
 | Every request identifies itself to DOL | vitest asserts `User-Agent` matches `^mcp-wagewatch/\d` | ✅ **added 2026-07-29, mutation-probed red** |
-| Token never enters the query string | vitest asserts header-only auth | ✅ present |
+| No error message carries the request URL or the key | vitest: *"never lets the request URL or the key reach a caller in an error"* — plants a URL-bearing upstream body and a URL-bearing transport error, asserts neither survives | ✅ **added 2026-09-14**, mutation-probed (dropping `redactSecrets` turns it red). ⚠️ **This row replaces "Token never enters the query string ✅ present", which certified the opposite of what the code does on purpose**: the v4 API 401s the header form, so the key MUST ride the query string, and the test beneath that row asserts exactly that. A ✅ on an impossible property is worse than a 🔴 on a real one |
 | Published tarball ships no tests/tooling | `files` whitelist + `npm pack --dry-run` | ✅ **added 2026-07-29** — `files: ["dist"]`; `verify:pack` fails if any source, test or tsconfig appears in the tarball |
 | Every answer states its vintage (SPEC `vintage-on-every-answer`) | vitest ×3 — the note, newest-date across a mixed set, and the no-dates case; computed from rows, never the clock | ✅ **added 2026-07-29**, written RED first |
 
@@ -79,8 +79,9 @@ Check: `test/server.test.ts` (tagged `spec: vintage-on-every-answer`), three cas
 
 ## Known gaps, ranked by blast radius
 
-1. **README-as-artifact.** It is what LobeHub and Glama render, and it still documents the old clone-and-point-tsx-at-it install. Nothing checks the documented path executes, and the published package now supports a shorter one. **Highest-value remaining item.**
+1. ~~**README-as-artifact.** It still documents the old clone-and-point-tsx-at-it install.~~ **STRUCK 2026-09-14** — the README has led with `npx @haksanlulz/mcp-wagewatch` since 1.1.0, and now leads with the .mcpb bundle. The *rung* is still missing, though, and that is the part worth keeping: nothing checks the documented install path executes, so it stays the 🔴 row in §2.
 2. **§5 holds one spec of a planned three** — the operator's stated MUST-NEVER for this server is authored, implemented and linked (2026-07-29). Slots 2 and 3 are open. §1's descriptive bullets are still transcribed from the README rather than elicited; only the MUST NEVER clause is in his words.
 3. **vitest version drift** — fairrent 2.1.9, the siblings 4.1.10, for no recorded reason.
 4. **`smoke` is in-memory, not stdio.** `verify:pack` now covers the real-stdio channel, so smoke's remaining job is the live upstream contract. Its name oversells it.
-5. **Nothing is published yet.** The package is verified publishable; `npm publish` is an operator action.
+5. ~~**Nothing is published yet.**~~ **STRUCK 2026-09-14** — `npm view @haksanlulz/mcp-wagewatch version` answers `1.1.0`. It has been on the registry since the 1.1.0 release and this line went on saying otherwise.
+6. **Two shipped artifacts now carry the SDK's HTTP-transport dependencies.** `npm audit` reports 2 moderate advisories on 2026-09-14 — hono (3 advisories, `<=4.13.4`) and qs (2, via express), both pulled in by `@modelcontextprotocol/sdk` for transports this server never imports and `test/no-http-stack.test.ts` pins that it never will. Unreachable, but the .mcpb bundle **ships** them as files rather than resolving them at install, so the payload contains known-vulnerable code that nothing here executes. `npm audit fix` is available and untaken: a dependency bump is artifact-affecting and belongs to its own change, not to a docs pass.

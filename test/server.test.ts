@@ -202,9 +202,11 @@ describe("employer_violations", () => {
     const lastCall = fetchMock.mock.calls.at(-1)!;
     const url = lastCall[0] as URL;
     const opts = lastCall[1] as any;
-    // The key rides the header, never the query string, so it cannot leak into
-    // request logs (README: "the key is never logged").
-    expect(url.searchParams.get("X-API-KEY")).toBe("test-key"); // query param: the header form 401s live
+    // The key rides the QUERY STRING: the v4 API answers 401 to the header form
+    // (verified live 2026-08-23). The comment that used to sit here said the
+    // opposite of the assertion beneath it. What protects the key instead is the
+    // redaction test below — no error message carries the URL or the key.
+    expect(url.searchParams.get("X-API-KEY")).toBe("test-key");
     expect(opts.headers["X-API-KEY"]).toBeUndefined();
     // Outbound requests carry an abort/timeout signal.
     expect(opts.signal).toBeInstanceOf(AbortSignal);
@@ -213,6 +215,33 @@ describe("employer_violations", () => {
     // missing UA is invisible to every other test in this file — it shipped
     // that way until 2026-07-29.
     expect(opts.headers["User-Agent"]).toMatch(/^mcp-wagewatch\/\d/);
+  });
+
+  it("never lets the request URL or the key reach a caller in an error", async () => {
+    // Since the key must ride the query string, this is the property that
+    // guards it. Two shapes, both of which surface someone else's message: an
+    // upstream body that echoes the request, and a transport error that quotes
+    // the URL it was fetching.
+    process.env.DOL_API_KEY = "s3cr3t-dol-key-value";
+
+    fetchMock.mockResolvedValue(
+      textResponse(
+        "rejected: https://apiprod.dol.gov/v4/get/WHD/enforcement/json?limit=21&X-API-KEY=s3cr3t-dol-key-value",
+        { ok: false, status: 400 },
+      ),
+    );
+    const echoed: any = await call("employer_violations", { employer: "acme" });
+    expect(echoed.isError).toBe(true);
+    expect(echoed.content[0].text).not.toContain("s3cr3t-dol-key-value");
+    expect(echoed.content[0].text).toContain("[redacted]");
+
+    clearDolCache();
+    fetchMock.mockImplementation((url: URL) => {
+      throw new Error(`connect ECONNREFUSED while requesting ${url.toString()}`);
+    });
+    const thrown: any = await call("employer_violations", { employer: "globex" });
+    expect(thrown.isError).toBe(true);
+    expect(thrown.content[0].text).not.toContain("s3cr3t-dol-key-value");
   });
 
   it("keeps the raw-cased term in the LIKE filter, not only an uppercased one", async () => {
@@ -797,6 +826,54 @@ describe("wagewatch 1.1.0", () => {
     const raw = lastUrl().searchParams.get("filter_object")!;
     expect(raw).toContain('"value":["R","RW"]');
     expect(JSON.parse(raw).value).toEqual(["R", "RW"]);
+  });
+});
+
+describe("outbound throttle", () => {
+  // DOL Open Data is a free public service shared with everyone else using it.
+  // The throttle is the politeness contract, and GAUNTLET §3 claimed these two
+  // scans existed for a year while neither did.
+  it("serializes concurrent requests through the throttle queue", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    fetchMock.mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      inFlight--;
+      return jsonResponse([]);
+    });
+
+    await Promise.all([
+      call("employer_violations", { employer: "alpha" }),
+      call("employer_violations", { employer: "bravo" }),
+      call("employer_violations", { employer: "charlie" }),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(maxInFlight).toBe(1); // never two requests on the wire at once
+  });
+
+  it("spaces request STARTS by the throttle gap", async () => {
+    // Start-to-start, not gap-after-response: a slow reply must not let the next
+    // request go out immediately behind it.
+    const starts: number[] = [];
+    fetchMock.mockImplementation(async () => {
+      starts.push(Date.now());
+      return jsonResponse([]);
+    });
+
+    await Promise.all([
+      call("employer_violations", { employer: "delta" }),
+      call("employer_violations", { employer: "echo" }),
+      call("employer_violations", { employer: "foxtrot" }),
+    ]);
+
+    expect(starts).toHaveLength(3);
+    for (let i = 1; i < starts.length; i++) {
+      // 150ms floor; the slack is host timer resolution, not policy.
+      expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(140);
+    }
   });
 });
 
