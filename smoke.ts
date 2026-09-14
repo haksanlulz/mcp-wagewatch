@@ -1,9 +1,26 @@
-// Live smoke test: one real call per tool against the DOL API.
+// Live smoke test: one real call per tool against the DOL API, each ASSERTING
+// something about the answer's content.
+//
 // Gated on DOL_API_KEY: prints a skip notice and exits 0 when the key is unset,
 // so it is safe to wire into CI without a secret.
 //
 //   npm run smoke
 //
+// Exit codes: 0 all checks passed · 1 a check failed · 2 upstream was unusable
+// (429 / 5xx / transport), which is a statement about DOL, not about this code.
+//
+// WHY THE ASSERTIONS ARE THE POINT. This file used to print body.count and move
+// on, so every tool passed by not throwing. The defect that closed in WW-1 --
+// employer name search uppercased the term against a case-sensitive LIKE over
+// mixed-case stored names, answering a confident "no cases found" -- produced
+// count 0 everywhere and could not have reddened a single check here. A live
+// rung that cannot distinguish a real answer from an empty one is not a rung.
+//
+// FIXTURE STABILITY. WHISARD is the record of CONCLUDED WHD compliance actions
+// since FY2005. Concluded cases are historical: rows are added as investigations
+// close, and published rows do not change. So a pinned case id stays valid, and
+// a count assertion is written as a floor (">= what was measured"), which new
+// publications can only push further from red. Measured 2026-09-14.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "./server.js";
@@ -15,8 +32,25 @@ if (!process.env.DOL_API_KEY?.trim()) {
   process.exit(0);
 }
 
+/** A concluded 2007 Indiana case, flagged RW. Its employer name is mixed-case. */
+const PINNED_CASE_ID = "1476714";
+/** Both concluded cases for this employer: 1476714 (2007) and 1419247 (2005). */
+const PINNED_EMPLOYER = "Kevin Misch";
+/** 151 matching cases on 2026-09-14; an uppercase-only search finds exactly 1. */
+const BROAD_EMPLOYER = "Walmart";
+const BROAD_EMPLOYER_FLOOR = 100;
+
+/** Upstream said "come back later" — not a verdict about the answer. */
+class UpstreamError extends Error {}
+
+const UPSTREAM_SIGNATURE = /HTTP (429|5\d\d)|timed out|timeout|fetch failed|network/i;
+
 function parse(result: any) {
   return JSON.parse(result.content[0].text);
+}
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
 }
 
 async function main(): Promise<void> {
@@ -25,63 +59,179 @@ async function main(): Promise<void> {
   const client = new Client({ name: "smoke", version: "1.0.0" }, { capabilities: {} });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
+  let passed = 0;
   let failures = 0;
+  let upstream = 0;
+  let skipped = 0;
+
+  /** Call a tool, separating "DOL is unavailable" from "the answer is wrong". */
+  const callTool = async (name: string, args: Record<string, unknown>) => {
+    const res: any = await client.callTool({ name, arguments: args });
+    if (res.isError) {
+      const text = String(res.content[0].text);
+      if (UPSTREAM_SIGNATURE.test(text)) throw new UpstreamError(text);
+      throw new Error(text);
+    }
+    return parse(res);
+  };
+
   const run = async (label: string, fn: () => Promise<void>) => {
     try {
       await fn();
-      console.log(`ok   ${label}`);
+      passed++;
+      console.log(`ok       ${label}`);
     } catch (err) {
-      failures++;
-      console.error(`FAIL ${label}: ${err instanceof Error ? err.message : String(err)}`);
+      const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof UpstreamError) {
+        upstream++;
+        console.error(`UPSTREAM ${label}: ${message}`);
+      } else {
+        failures++;
+        console.error(`FAIL     ${label}: ${message}`);
+      }
     }
+  };
+
+  /** A check that could not be run is not a check that passed. */
+  const skip = (label: string, why: string) => {
+    skipped++;
+    console.log(`SKIPPED  ${label}: ${why}`);
   };
 
   let sampleCaseId: string | null = null;
 
   await run("employer_violations", async () => {
-    const body = parse(await client.callTool({ name: "employer_violations", arguments: { employer: "walmart", limit: 3 } }));
-    console.log(`     -> ${body.count} case(s); first employer: ${body.cases[0]?.employer ?? "(none)"}`);
-    sampleCaseId = body.cases[0]?.case_id ?? null;
+    const body = await callTool("employer_violations", { employer: PINNED_EMPLOYER, limit: 5 });
+    console.log(`         -> ${body.count} case(s): ${body.cases.map((c: any) => c.case_id).join(", ")}`);
+    assert(body.count >= 2, `expected >= 2 cases for "${PINNED_EMPLOYER}", got ${body.count}`);
+    const ids = body.cases.map((c: any) => c.case_id);
+    assert(ids.includes(PINNED_CASE_ID), `expected case ${PINNED_CASE_ID} among ${ids.join(", ")}`);
+    const hit = body.cases.find((c: any) => c.case_id === PINNED_CASE_ID);
+    assert(/misch/i.test(String(hit.employer)), `unexpected employer name: ${hit.employer}`);
+    assert(hit.location.state === "IN", `expected state IN, got ${hit.location.state}`);
+    // The live date shape is a full timestamp, not a bare YYYY-MM-DD.
+    assert(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(String(hit.findings_end_date)),
+      `findings_end_date is not a timestamp: ${hit.findings_end_date}`,
+    );
+    sampleCaseId = hit.case_id;
   });
 
   await run("back_wages_summary", async () => {
-    const body = parse(await client.callTool({ name: "back_wages_summary", arguments: { employer: "walmart", max_cases: 200 } }));
-    console.log(`     -> ${body.case_count} case(s); total back wages $${body.total_back_wages}`);
+    const body = await callTool("back_wages_summary", { employer: BROAD_EMPLOYER, max_cases: 200 });
+    console.log(`         -> ${body.case_count} case(s); total back wages $${body.total_back_wages}`);
+    // An uppercase-only name search returns 1 case here, so this floor is what
+    // stands between the WW-1 defect and a green live rung.
+    assert(
+      body.case_count >= BROAD_EMPLOYER_FLOOR,
+      `expected >= ${BROAD_EMPLOYER_FLOOR} cases for "${BROAD_EMPLOYER}", got ${body.case_count}`,
+    );
+    assert(body.total_back_wages > 0, `expected non-zero back wages, got ${body.total_back_wages}`);
+    assert(body.capped === false, `expected an uncapped total at max_cases 200, got capped=${body.capped}`);
   });
 
   await run("violations_by_state", async () => {
-    const body = parse(await client.callTool({ name: "violations_by_state", arguments: { state: "NY", limit: 3 } }));
-    console.log(`     -> ${body.count} case(s); top employer: ${body.cases[0]?.employer ?? "(none)"}`);
+    const body = await callTool("violations_by_state", { state: "NY", limit: 3 });
+    console.log(`         -> ${body.count} case(s), has_more=${body.has_more}; top: ${body.cases[0]?.employer}`);
+    assert(body.count === 3, `expected the full page of 3, got ${body.count}`);
+    assert(body.has_more === true, "expected has_more on a 3-case page of New York");
+    assert(String(body.note ?? "").includes("More cases match"), "expected the truncation note");
+    for (const c of body.cases) {
+      assert(c.location.state === "NY", `expected NY, got ${c.location.state} on case ${c.case_id}`);
+    }
+    // Ordered by back wages, largest first.
+    const wages = body.cases.map((c: any) => c.back_wages ?? 0);
+    assert(wages[0] > 0, `expected a non-zero largest back-wage figure, got ${wages[0]}`);
+    assert(
+      wages.every((w: number, i: number) => i === 0 || w <= wages[i - 1]),
+      `expected descending back wages, got ${wages.join(", ")}`,
+    );
   });
 
-  await run("case_detail", async () => {
-    if (!sampleCaseId) {
-      console.log("     -> skipped (no case id from employer_violations)");
-      return;
-    }
-    const body = parse(await client.callTool({ name: "case_detail", arguments: { case_id: sampleCaseId } }));
-    console.log(`     -> case ${sampleCaseId} found=${body.found}; statutes: ${(body.statute_breakdown ?? []).map((s: any) => s.statute).join(", ") || "(none)"}`);
+  await run("case_detail (pinned case)", async () => {
+    const body = await callTool("case_detail", { case_id: PINNED_CASE_ID });
+    console.log(
+      `         -> case ${PINNED_CASE_ID} found=${body.found}; statutes: ${(body.statute_breakdown ?? []).map((s: any) => s.statute).join(", ")}`,
+    );
+    assert(body.found === true, `expected to find case ${PINNED_CASE_ID}`);
+    assert(body.case_id === PINNED_CASE_ID, `case id echoed as ${body.case_id}`);
+    assert(body.flsa_repeat_violator === "RW", `expected flag RW, got ${body.flsa_repeat_violator}`);
+    assert(Array.isArray(body.statute_breakdown), "statute_breakdown is not an array");
+    assert(body.statute_breakdown.length >= 1, "expected at least one statute on a case with violations");
   });
+
+  if (sampleCaseId) {
+    await run("case_detail (case id from the search above)", async () => {
+      const body = await callTool("case_detail", { case_id: sampleCaseId });
+      assert(body.found === true, `expected to find case ${sampleCaseId}`);
+      assert(body.case_id === sampleCaseId, `case id echoed as ${body.case_id}`);
+      console.log(`         -> case ${sampleCaseId} round-trips from a list result`);
+    });
+  } else {
+    skip("case_detail (case id from the search above)", "employer_violations returned no case id");
+  }
 
   await run("top_cases", async () => {
-    const body = parse(await client.callTool({ name: "top_cases", arguments: { state: "NY", limit: 3 } }));
-    console.log(`     -> ${body.count} case(s), has_more=${body.has_more}; biggest: ${body.cases[0]?.employer ?? "(none)"} $${body.cases[0]?.back_wages ?? "?"}`);
-    if (typeof body.has_more !== "boolean") throw new Error("expected a has_more flag");
+    const body = await callTool("top_cases", { state: "NY", limit: 3 });
+    console.log(
+      `         -> ${body.count} case(s), has_more=${body.has_more}; biggest: ${body.cases[0]?.employer} $${body.cases[0]?.back_wages}`,
+    );
+    assert(body.count === 3, `expected the full page of 3, got ${body.count}`);
+    assert(body.has_more === true, "expected has_more on a 3-case page of New York");
+    assert(body.cases[0].back_wages > 0, `expected a non-zero largest case, got ${body.cases[0].back_wages}`);
+    assert(body.data_currency.newest_findings_end_date != null, "expected a vintage on a non-empty answer");
   });
 
   await run("flagged_employers", async () => {
-    const body = parse(await client.callTool({ name: "flagged_employers", arguments: { state: "NY", limit: 3 } }));
-    console.log(`     -> ${body.count} flagged case(s), has_more=${body.has_more}; first: ${body.cases[0]?.employer ?? "(none)"}`);
+    const body = await callTool("flagged_employers", { state: "NY", limit: 3 });
+    console.log(
+      `         -> ${body.count} flagged case(s): ${body.cases.map((c: any) => `${c.case_id}=${c.flsa_repeat_violator}`).join(", ")}`,
+    );
+    assert(body.count === 3, `expected the full page of 3, got ${body.count}`);
+    assert(JSON.stringify(body.query.matched_flags) === '["R","RW"]', `matched_flags: ${JSON.stringify(body.query.matched_flags)}`);
+    for (const c of body.cases) {
+      // Every returned case states its flag, and it is one the search asked for.
+      assert(
+        c.flsa_repeat_violator === "R" || c.flsa_repeat_violator === "RW",
+        `case ${c.case_id} carries flag ${JSON.stringify(c.flsa_repeat_violator)}`,
+      );
+    }
+  });
+
+  await run("a single-day window is inclusive of its own day", async () => {
+    // Both bounds on one date: a strict gt/lt would answer zero. Live-verified
+    // rows exist on 2024-06-16 (WW-4).
+    const day = "2024-06-16";
+    const body = await callTool("top_cases", { found_after: day, found_before: day, limit: 3 });
+    console.log(`         -> ${body.count} case(s) ending exactly ${day}`);
+    assert(body.count > 0, `expected cases ending on ${day}, got ${body.count}`);
+    for (const c of body.cases) {
+      assert(
+        String(c.findings_end_date).startsWith(day),
+        `case ${c.case_id} ends ${c.findings_end_date}, outside the requested day`,
+      );
+    }
+  });
+
+  await run("an unknown argument is refused, not ignored", async () => {
+    const res: any = await client.callTool({
+      name: "top_cases",
+      arguments: { state: "NY", found_afer: "2024-01-01" },
+    });
+    assert(res.isError === true, "expected an error for a misspelled argument");
+    assert(String(res.content[0].text).includes("found_afer"), "expected the offending key to be named");
   });
 
   await client.close();
   await server.close();
 
-  if (failures > 0) {
-    console.error(`\nsmoke: ${failures} tool(s) failed`);
-    process.exit(1);
+  console.log(`\nsmoke: ${passed} passed, ${failures} failed, ${upstream} upstream, ${skipped} skipped`);
+  if (failures > 0) process.exit(1);
+  if (upstream > 0) {
+    console.error("smoke: DOL was unavailable for at least one check — rerun before reading this as a pass");
+    process.exit(2);
   }
-  console.log("\nsmoke: all tools ok");
+  if (skipped > 0) console.log("smoke: some checks did not run; a skip is not a pass");
 }
 
 main().catch((err) => {
