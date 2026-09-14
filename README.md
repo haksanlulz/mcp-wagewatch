@@ -49,7 +49,11 @@ Sources:
 Notes:
 - There is no single total-CMP-dollar column in WHISARD. `cmp_assd_cnt` is a count of assessments; the dollar penalties live in per-statute columns (`flsa_cmp_assd_amt`, `mspa_cmp_assd_amt`, `h1b_cmp_assd_amt`, and so on). `civil_penalties` sums those.
 - `back_wages_summary` aggregates client-side (the API does not expose a group-by), over up to `max_cases` matching rows (default 1000). If `capped` is true the totals are a floor.
-- **Name search: the endpoint's `LIKE` is case-SENSITIVE, and WHISARD stores names mixed-case.** Confirmed live 2026-09-14 by the pair that disproves the opposite claim this line used to make: `{"field":"trade_nm","operator":"like","value":"%KEVIN MISCH%"}` answers HTTP 204 with zero rows, while `"%Kevin Misch%"` answers HTTP 200 with case_id 1476714 and case_id 1419247. Of the 500 most recent rows by `findings_end_date`, 485 (97%) carry a mixed-case `trade_nm`. So the server searches `trade_nm` and `legal_name` for the term in every case variant — as typed, uppercased, and title-cased — as one `or` filter, wrapping each as `%term%`. `LIKE` metacharacters (`%`, `_`, `\`) are escaped after the case fold, so a stray wildcard in the input matches literally.
+- **Name search: the endpoint's `LIKE` is case-SENSITIVE, and WHISARD stores names mixed-case.** Confirmed live 2026-09-14 by the pair that disproves the opposite claim this line used to make: `{"field":"trade_nm","operator":"like","value":"%KEVIN MISCH%"}` answers HTTP 204 with zero rows, while `"%Kevin Misch%"` answers HTTP 200 with case_id 1476714 and case_id 1419247. Of the 500 most recent rows by `findings_end_date`, 485 (97%) carry a mixed-case `trade_nm`. So the server searches `trade_nm` and `legal_name` for **three** case variants of the term — as typed, uppercased, and title-cased — as one `or` filter, wrapping each as `%term%`.
+
+  Three variants are not every variant. A name stored with internal capitals (`ABC Plumbing`, `JBS USA`, `McDonald's`) is missed unless the term is typed in the stored casing, because `LIKE` has no case-insensitive form and DOL exposes no `ilike`. **A zero-result name search is worth one retry in the exact stored capitalization before it is read as "no cases found"** — `employer_violations` and `back_wages_summary` say so in the `note` on an empty answer, and the `employer` parameter's description says it up front.
+
+  On the wildcards: `_` is live-confirmed as a single-character wildcard (`%Kevin_Misch%` returns both Kevin Misch rows, the `_` matching the space), so an unescaped underscore in a caller's term would widen the search. The server escapes `%`, `_` and `\` after the case fold, using SQL's conventional backslash escape. ⚠️ **Whether DOL's engine honours that backslash is NOT verified** — every probe on 2026-09-14 answered HTTP 429 — and it matters in both directions: if the backslash is inert, an escaped term is a pattern looking for a literal backslash and matches nothing. No rung covers it; see GAUNTLET known gaps.
 - `found_after` and `found_before` are **inclusive**: a case whose findings ended on the exact date is included. DOL's operators are `eq`/`neq`/`gt`/`lt`/`in`/`not_in`/`like` with no `gte`/`lte`, and `findings_end_date` is a midnight timestamp, so each bound is shifted one day outward to the instant just outside the window.
 - **A zero-match filter answers HTTP 204 with an empty body** (confirmed live) — the server parses that as an empty result set, so "no concluded case found" is a real answer: `count: 0`, `has_more: false`, and the data-currency note that absence is not evidence of compliance.
 - **All `filter_object` values must be JSON strings** — the engine answers a 500 "server error querying the dataset" for numeric values (`{"value": 0}` fails, `{"value": "0"}` works; confirmed live). Every filter value is string-coerced at serialization time.
@@ -157,16 +161,16 @@ A worker names an employer at a legal-aid intake desk. Four calls, in order. Eve
 
 **1. Find the cases.** `employer_violations { "employer": "Kevin Misch" }` → `count: 2`.
 
-| case_id | employer | ended | back wages | employees | civil penalties |
+| case_id | employer | `findings_end_date` | back wages | employees | civil penalties |
 |---|---|---|---|---|---|
-| `1419247` | Kevin Misch Trucking & Excavating (Wheatfield, IN) | 2005-09-24 | $41,918 | 16 | $0 |
-| `1476714` | Kevin Misch Excavating (Crown Point, IN) | 2007-05-27 | $30,438 | 23 | $11,069 |
+| `1419247` | Kevin Misch Trucking & Excavating (Wheatfield, IN) | `2005-09-24T00:00:00` | $41,918 | 16 | $0 |
+| `1476714` | Kevin Misch Excavating (Crown Point, IN) | `2007-05-27T00:00:00` | $30,438 | 23 | $11,069 |
 
 Note what the search had to do to find them: WHISARD stores the name as `Kevin Misch Excavating`, and DOL's `LIKE` is case-sensitive, so `%KEVIN MISCH%` answers HTTP 204 — zero rows — for an employer with two published cases.
 
 **2. Open the larger one.** `case_detail { "case_id": "1419247" }` → the per-statute breakdown is a single row: FLSA, 17 violations, $41,918 in back wages, 16 employees, no civil money penalty. Nothing under MSPA, H-2A, FMLA or child labor — this was a straight wage-and-hour case.
 
-**3. Get the pattern.** `back_wages_summary { "employer": "Kevin Misch" }` → `case_count: 2`, `total_back_wages: 72356`, `total_employees_affected: 39`, `total_civil_penalties: 11069`, spanning findings from 2003-11-01 to 2007-05-27, `capped: false` (so the totals are totals, not a floor).
+**3. Get the pattern.** `back_wages_summary { "employer": "Kevin Misch" }` → `case_count: 2`, `total_back_wages: 72356`, `total_employees_affected: 39`, `total_civil_penalties: 11069`, `earliest_findings_start: "2003-11-01T00:00:00"`, `latest_findings_end: "2007-05-27T00:00:00"`, `capped: false` (so the totals are totals, not a floor). The dates are printed as the API returns them, here and in the table above: every WHISARD date field is a midnight timestamp, and a caller that slices ten characters off one is writing a different type than it read.
 
 **4. Check the flag.** `flagged_employers { "state": "IN", "flag": "RW" }` → case `1476714` is in the list, carrying `flsa_repeat_violator: "RW"` — WHD flagged the second investigation as both repeat and willful. The first case carries `"N/A"`.
 
