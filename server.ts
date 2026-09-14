@@ -411,6 +411,17 @@ function normDate(v: unknown, label: string): string | undefined {
 }
 
 /**
+ * Shift an ISO date (YYYY-MM-DD) by whole days, in UTC so month and year
+ * rollover are the calendar's problem and not this function's.
+ */
+function shiftIsoDate(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d) + days * 86_400_000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`;
+}
+
+/**
  * Escape SQL LIKE metacharacters so a user term matches literally. Backslash
  * first (it is the escape character), then the `%` and `_` wildcards.
  */
@@ -464,6 +475,14 @@ function nameFilter(term: string): FilterObject {
 // Tool definitions
 // ---------------------------------------------------------------------------
 
+// One string per bound, shared by all three tools that take a date window, so
+// the promise a caller reads cannot drift from the one the filter keeps. Both
+// bounds are inclusive; dateFilters is where that is made true.
+const FOUND_AFTER_DESC =
+  "Only cases whose findings ended on or after this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.";
+const FOUND_BEFORE_DESC =
+  "Only cases whose findings ended on or before this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.";
+
 const TOOLS: Tool[] = [
   {
     name: "employer_violations",
@@ -480,8 +499,8 @@ const TOOLS: Tool[] = [
           type: "string",
           description: "Optional 2-letter state code to filter by (e.g. \"NY\").",
         },
-        found_after: { type: "string", description: "Only cases whose findings ended on/after this ISO date (YYYY-MM-DD)." },
-        found_before: { type: "string", description: "Only cases whose findings ended on/before this ISO date (YYYY-MM-DD)." },
+        found_after: { type: "string", description: FOUND_AFTER_DESC },
+        found_before: { type: "string", description: FOUND_BEFORE_DESC },
         limit: {
           type: "integer",
           description: `Max cases to return (1-${MAX_PAGE}, default 20).`,
@@ -521,8 +540,8 @@ const TOOLS: Tool[] = [
           type: "string",
           description: "Optional NAICS code prefix to filter industry (e.g. \"72\", \"722511\").",
         },
-        found_after: { type: "string", description: "Only cases whose findings ended on/after this ISO date (YYYY-MM-DD)." },
-        found_before: { type: "string", description: "Only cases whose findings ended on/before this ISO date (YYYY-MM-DD)." },
+        found_after: { type: "string", description: FOUND_AFTER_DESC },
+        found_before: { type: "string", description: FOUND_BEFORE_DESC },
         limit: { type: "integer", description: `Max cases to return (1-${MAX_PAGE}, default 20).` },
       },
       required: ["state"],
@@ -540,8 +559,8 @@ const TOOLS: Tool[] = [
       properties: {
         state: { type: "string", description: 'Optional 2-letter state code (e.g. "NY").' },
         naics: { type: "string", description: 'Optional NAICS code prefix (e.g. "72" for accommodation and food services).' },
-        found_after: { type: "string", description: "Only cases whose findings ended on/after this ISO date (YYYY-MM-DD)." },
-        found_before: { type: "string", description: "Only cases whose findings ended on/before this ISO date (YYYY-MM-DD)." },
+        found_after: { type: "string", description: FOUND_AFTER_DESC },
+        found_before: { type: "string", description: FOUND_BEFORE_DESC },
         limit: { type: "integer", description: `Max cases to return (1-${MAX_PAGE}, default 20).` },
       },
       additionalProperties: false,
@@ -591,13 +610,31 @@ const TOOLS: Tool[] = [
 // Tool handlers
 // ---------------------------------------------------------------------------
 
-/** Optional findings_end_date range conditions from found_after / found_before. */
+/**
+ * Optional findings_end_date range conditions from found_after / found_before.
+ *
+ * Both bounds are INCLUSIVE, which takes work: DOL's operator set is
+ * eq/neq/gt/lt/in/not_in/like with no gte/lte, and findings_end_date is stored
+ * as a full timestamp at midnight ("2024-06-16T00:00:00"). So a bare
+ * `gt "2024-06-16"` drops every case that ended that day, and `lt` drops its own
+ * day at the other end — a statute-of-limitations window one day narrower at
+ * each end, with nothing in the answer saying so. Verified live 2026-09-14:
+ * gt "2024-06-15" returns rows at 2024-06-16T00:00:00 as its earliest, and
+ * gt "2024-06-16" returns 2024-06-17T00:00:00 as its earliest.
+ *
+ * Each bound is therefore pushed one day outward, to the instant just outside
+ * the requested window, and the shift is applied here and only here.
+ */
 function dateFilters(args: Row): FilterObject[] {
   const out: FilterObject[] = [];
   const after = normDate(args.found_after, "found_after");
   const before = normDate(args.found_before, "found_before");
-  if (after) out.push({ field: "findings_end_date", operator: "gt", value: after });
-  if (before) out.push({ field: "findings_end_date", operator: "lt", value: before });
+  if (after) {
+    out.push({ field: "findings_end_date", operator: "gt", value: `${shiftIsoDate(after, -1)}T23:59:59` });
+  }
+  if (before) {
+    out.push({ field: "findings_end_date", operator: "lt", value: `${shiftIsoDate(before, 1)}T00:00:00` });
+  }
   return out;
 }
 

@@ -477,13 +477,67 @@ describe("wagewatch 1.1.0", () => {
     expect(body.note).toBeUndefined();
   });
 
-  it("date filters ride findings_end_date as gt/lt filter nodes", async () => {
+  it("date filters ride findings_end_date as INCLUSIVE gt/lt filter nodes", async () => {
+    // DOL has no gte/lte and findings_end_date is a midnight timestamp, so an
+    // inclusive bound is expressed as the instant just outside it. A bare
+    // gt "2024-01-01" would drop every case that ended on 2024-01-01 (live:
+    // gt "2024-06-16" returns 2024-06-17T00:00:00 as its earliest row), and the
+    // schema promises the day is included.
     fetchMock.mockResolvedValueOnce(jsonResponse([]));
     await call("violations_by_state", { state: "NY", found_after: "2024-01-01", found_before: "2026-01-01" });
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
     const nodes = filter.and;
-    expect(nodes).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2024-01-01" });
-    expect(nodes).toContainEqual({ field: "findings_end_date", operator: "lt", value: "2026-01-01" });
+    expect(nodes).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2023-12-31T23:59:59" });
+    expect(nodes).toContainEqual({ field: "findings_end_date", operator: "lt", value: "2026-01-02T00:00:00" });
+  });
+
+  it("the inclusive shift is applied exactly once, on every tool that takes a window", async () => {
+    for (const [tool, args] of [
+      ["employer_violations", { employer: "acme" }],
+      ["violations_by_state", { state: "NY" }],
+      ["top_cases", {}],
+    ] as const) {
+      fetchMock.mockResolvedValueOnce(jsonResponse([]));
+      await call(tool, { ...args, found_after: "2024-06-16", found_before: "2024-06-16" });
+      const raw = lastUrl().searchParams.get("filter_object")!;
+      const nodes = JSON.parse(raw).and;
+      // One day out, not two: a second application would read 2024-06-14.
+      expect(nodes).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2024-06-15T23:59:59" });
+      expect(nodes).toContainEqual({ field: "findings_end_date", operator: "lt", value: "2024-06-17T00:00:00" });
+      // A single-day window still selects that day's rows rather than nothing.
+      expect(nodes.filter((n: any) => n.field === "findings_end_date")).toHaveLength(2);
+    }
+  });
+
+  it("the shift handles month, year and leap-day rollover", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("top_cases", { found_after: "2024-03-01", found_before: "2024-12-31" });
+    const nodes = JSON.parse(lastUrl().searchParams.get("filter_object")!).and;
+    expect(nodes).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2024-02-29T23:59:59" }); // leap year
+    expect(nodes).toContainEqual({ field: "findings_end_date", operator: "lt", value: "2025-01-01T00:00:00" }); // year rollover
+
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("top_cases", { found_after: "2025-01-01", found_before: "2023-02-28" });
+    const nodes2 = JSON.parse(lastUrl().searchParams.get("filter_object")!).and;
+    expect(nodes2).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2024-12-31T23:59:59" });
+    expect(nodes2).toContainEqual({ field: "findings_end_date", operator: "lt", value: "2023-03-01T00:00:00" }); // non-leap
+  });
+
+  it("all three date-window tools promise the same inclusive semantics, verbatim", async () => {
+    const { tools } = await client.listTools();
+    const windowed = tools.filter((t) => "found_after" in ((t.inputSchema as any).properties ?? {}));
+    expect(windowed.map((t) => t.name).sort()).toEqual(["employer_violations", "top_cases", "violations_by_state"]);
+    for (const t of windowed) {
+      const props = (t.inputSchema as any).properties;
+      for (const bound of ["found_after", "found_before"]) {
+        expect(props[bound].description).toContain("Inclusive: a case that ended on this exact date is included.");
+      }
+      expect(props.found_after.description).toContain("ended on or after");
+      expect(props.found_before.description).toContain("ended on or before");
+    }
+    // One string per bound across all three, so the promise cannot drift.
+    expect(new Set(windowed.map((t) => (t.inputSchema as any).properties.found_after.description)).size).toBe(1);
+    expect(new Set(windowed.map((t) => (t.inputSchema as any).properties.found_before.description)).size).toBe(1);
   });
 
   it("a malformed date is rejected before any network call", async () => {
