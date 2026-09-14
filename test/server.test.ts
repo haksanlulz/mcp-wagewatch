@@ -623,6 +623,18 @@ describe("SPEC vintage-on-every-answer", () => {
     const body = payload(await call("employer_violations", { employer: "nobody" }));
     expect(body.data_currency.newest_findings_end_date).toBeNull();
   });
+
+  it("states a vintage on the aggregate tool, which returns no rows to scan", async () => {
+    // back_wages_summary publishes totals, not cases: the only date in its
+    // answer is latest_findings_end. A scanner that recognises the raw column
+    // name alone reports null here over dated rows — the SPEC's exact failure,
+    // on one of the six tools, and the other two vintage cases both drive
+    // employer_violations so neither could see it.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_SMALL, ROW_TYSON] }));
+    const body = payload(await call("back_wages_summary", { employer: "tyson" }));
+    expect(body.latest_findings_end).toBe("2022-01-01T00:00:00");
+    expect(body.data_currency.newest_findings_end_date).toBe("2022-01-01T00:00:00");
+  });
 });
 
 

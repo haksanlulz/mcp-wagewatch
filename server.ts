@@ -997,7 +997,19 @@ const CURRENCY_NOTE =
   "enforcement records, not an employer's present compliance state, and an " +
   "empty result means no concluded published case was found — not that none exists.";
 
-/** Deepest-first scan for findings_end_date, so every result shape is covered. */
+/**
+ * Every key a result shape uses to carry a case's findings-end date.
+ *
+ * The list tools pass the raw column through as `findings_end_date`, but
+ * back_wages_summary returns totals and no rows at all — its newest row leaves
+ * as `latest_findings_end`. Scanning for the column name alone therefore
+ * answered `newest_findings_end_date: null` on that tool over dated rows, which
+ * is the SPEC's own failure on one of the six. Any future result shape that
+ * names a findings-end date differently belongs in this list.
+ */
+const FINDINGS_END_KEYS = new Set(["findings_end_date", "latest_findings_end"]);
+
+/** Deepest-first scan for a findings-end date, so every result shape is covered. */
 function newestFindingsDate(node: unknown): string | null {
   if (Array.isArray(node)) {
     return node.reduce<string | null>((max, item) => {
@@ -1010,7 +1022,7 @@ function newestFindingsDate(node: unknown): string | null {
   for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
     // ISO-8601 sorts lexicographically, so string compare IS date compare.
     const found =
-      key === "findings_end_date" && typeof value === "string" && value !== ""
+      FINDINGS_END_KEYS.has(key) && typeof value === "string" && value !== ""
         ? value
         : newestFindingsDate(value);
     if (found !== null && (max === null || found > max)) max = found;
