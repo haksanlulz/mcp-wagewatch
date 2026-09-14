@@ -127,7 +127,31 @@ async function main(): Promise<void> {
       `expected >= ${BROAD_EMPLOYER_FLOOR} cases for "${BROAD_EMPLOYER}", got ${body.case_count}`,
     );
     assert(body.total_back_wages > 0, `expected non-zero back wages, got ${body.total_back_wages}`);
-    assert(body.capped === false, `expected an uncapped total at max_cases 200, got capped=${body.capped}`);
+    // A RELATIONSHIP, not a pinned upper bound. `capped === false` against a
+    // fixed max_cases 200 was the one assertion in this file that new
+    // publications could turn red for a reason that is not a defect — 49 more
+    // Walmart cases and a green live rung goes red pointing at the code. What
+    // holds at every count is that capping only happens on a full page.
+    assert(
+      body.capped === false || body.case_count === 200,
+      `capped=${body.capped} at case_count=${body.case_count} against max_cases 200`,
+    );
+    // The SPEC on the one tool that returns no rows: its newest date leaves as
+    // latest_findings_end, and the vintage scanner has to know that name or the
+    // aggregate answers null over dated cases (WW-A). Live, because the shape
+    // this reads is the server's own and a mock cannot disagree with it.
+    assert(
+      body.data_currency.newest_findings_end_date === body.latest_findings_end,
+      `vintage ${body.data_currency.newest_findings_end_date} != latest_findings_end ${body.latest_findings_end}`,
+    );
+    assert(body.latest_findings_end != null, "expected a newest findings date over 151 concluded cases");
+    // ... and the other direction on capping, at a cap the count is already far
+    // past, so it stays true as the dataset grows.
+    const capped = await callTool("back_wages_summary", { employer: BROAD_EMPLOYER, max_cases: 5 });
+    assert(
+      capped.capped === true && capped.case_count === 5,
+      `at max_cases 5 expected capped=true over 5 cases, got capped=${capped.capped} case_count=${capped.case_count}`,
+    );
   });
 
   await run("violations_by_state", async () => {
