@@ -711,11 +711,41 @@ describe("wagewatch 1.1.0", () => {
     expect(nodes).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2024-02-29T23:59:59" }); // leap year
     expect(nodes).toContainEqual({ field: "findings_end_date", operator: "lt", value: "2025-01-01T00:00:00" }); // year rollover
 
+    // The other two rollovers, one bound at a time: this pair used to ride on a
+    // single TRANSPOSED window (after 2025-01-01, before 2023-02-28), which is
+    // now refused as input — correctly, and it would have taken the arithmetic
+    // coverage with it.
     fetchMock.mockResolvedValueOnce(jsonResponse([]));
-    await call("top_cases", { found_after: "2025-01-01", found_before: "2023-02-28" });
+    await call("top_cases", { found_after: "2025-01-01" });
     const nodes2 = JSON.parse(lastUrl().searchParams.get("filter_object")!).and;
-    expect(nodes2).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2024-12-31T23:59:59" });
-    expect(nodes2).toContainEqual({ field: "findings_end_date", operator: "lt", value: "2023-03-01T00:00:00" }); // non-leap
+    expect(nodes2).toContainEqual({ field: "findings_end_date", operator: "gt", value: "2024-12-31T23:59:59" }); // year rollover, backwards
+
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("top_cases", { found_before: "2023-02-28" });
+    const nodes3 = JSON.parse(lastUrl().searchParams.get("filter_object")!).and;
+    expect(nodes3).toContainEqual({ field: "findings_end_date", operator: "lt", value: "2023-03-01T00:00:00" }); // non-leap
+  });
+
+  it("a transposed window is refused, because an unsatisfiable filter answers 0", async () => {
+    // found_after later than found_before builds `gt 2024-12-31T23:59:59 AND
+    // lt 2023-03-01T00:00:00` — a filter nothing can satisfy. DOL answers it
+    // HTTP 204, which this server renders as count 0, has_more false, and the
+    // note that an empty result means no concluded published case was found.
+    // Confirmed live 2026-09-14: that exact filter returns 204. The bound order
+    // is the only thing that can tell a mistyped window from a real absence.
+    const res: any = await call("top_cases", { found_after: "2025-01-01", found_before: "2023-02-28" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("2025-01-01");
+    expect(res.content[0].text).toContain("2023-02-28");
+    expect(res.content[0].text).toMatch(/selects nothing|later than/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a window whose bounds are equal is allowed: it is one day, not an error", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    const res: any = await call("top_cases", { found_after: "2024-06-16", found_before: "2024-06-16" });
+    expect(res.isError).toBeFalsy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("all three date-window tools promise the same inclusive semantics, verbatim", async () => {

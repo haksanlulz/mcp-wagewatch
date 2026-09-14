@@ -730,11 +730,27 @@ const TOOLS: Tool[] = [
  *
  * Each bound is therefore pushed one day outward, to the instant just outside
  * the requested window, and the shift is applied here and only here.
+ *
+ * The bound ORDER is checked here too, for the same reason the shift exists: a
+ * window whose bounds are the wrong way round cannot match anything, and an
+ * unsatisfiable filter comes back from DOL looking exactly like a real absence.
  */
 function dateFilters(args: Row): FilterObject[] {
   const out: FilterObject[] = [];
   const after = normDate(args.found_after, "found_after");
   const before = normDate(args.found_before, "found_before");
+  // A transposed window builds a filter nothing can satisfy, and DOL answers it
+  // HTTP 204 — which this server renders as a clean count 0 carrying the note
+  // that no concluded published case was found. That is the same answer a real
+  // absence gives, and on this dataset it reads as "no wage theft here". The
+  // bound order is the only thing that can separate the two, so it is checked
+  // rather than sent. Equal bounds are a one-day window and stay legal.
+  if (after && before && after > before) {
+    throw new Error(
+      `found_after (${after}) is later than found_before (${before}); that window selects nothing. ` +
+        "Swap the bounds — an empty answer here would read as \"no cases found\". Nothing was queried.",
+    );
+  }
   if (after) {
     out.push({ field: "findings_end_date", operator: "gt", value: `${shiftIsoDate(after, -1)}T23:59:59` });
   }
