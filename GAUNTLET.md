@@ -45,7 +45,8 @@ One of four near-identical civic servers converted together on 2026-07-29 (`mcp-
 | Class | Rungs |
 |---|---|
 | docs-only | none |
-| code-touch (`server.ts` / `index.ts` / `test/`) | `npm test` + `npm run typecheck` + §3 scans · **this is a public commit** |
+| code-touch (`server.ts` / `index.ts` / `test/`) | `npm test` + `npm run typecheck` (two passes since 2026-09-14: the build config, then `tsconfig.check.json` over `smoke.ts` and `test/` as well) + §3 scans · **this is a public commit** |
+| live-rung touch (`smoke.ts`) | `npm run typecheck` (it is checked there and nowhere else — `tsx` strips types without checking them) + **an actual `npm run smoke` against a live key**; exit 2 is upstream, not a pass |
 | behavior-change (tool names, schemas, output shape) | + `npm run smoke` with a live token + README tool table + §5 specs |
 | artifact-affecting (`package.json`, deps, shebang, tsconfig, `manifest.json`, `scripts/`) | + **`npm run verify:pack`** + **`npm run verify:mcpb`** — two shipped artifacts, two channels |
 | release (tag / npm publish) | + the full §2 channel map + `npm run smoke` with a live token + §5 specs |
