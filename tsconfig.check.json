@@ -1,0 +1,19 @@
+{
+  // Type-check EVERY TypeScript file in the repo, including the two the build
+  // config cannot see.
+  //
+  // tsconfig.json is the BUILD config: its `include` is index.ts + server.ts,
+  // because smoke.ts must not be emitted into dist/ and test/ must not ship.
+  // `npm run typecheck` ran that config alone, so the smoke and test sources
+  // were unchecked in the gate GAUNTLET §4 names for every code touch — and
+  // smoke.ts is executed by tsx, which strips types without checking them, so
+  // a type error there ships and surfaces only as a runtime fault during the
+  // live rung.
+  //
+  // Same compilerOptions as the build, strict included; wider `include`;
+  // noEmit, so nothing lands on disk.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["index.ts", "server.ts", "smoke.ts", "test"],
+  "exclude": ["dist", "node_modules", "scripts"]
+}

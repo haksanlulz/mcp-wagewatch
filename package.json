@@ -18,7 +18,7 @@
     "smoke": "tsx smoke.ts",
     "start": "tsx index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.check.json",
     "verify:pack": "node scripts/pack-probe.mjs",
     "pack:mcpb": "node scripts/pack-mcpb.mjs",
     "verify:mcpb": "node scripts/mcpb-probe.mjs"
