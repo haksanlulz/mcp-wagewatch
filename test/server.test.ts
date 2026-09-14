@@ -885,6 +885,45 @@ describe("wagewatch 1.1.0", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("a shape-legal date that is not a real calendar date is rejected, not rolled over", async () => {
+    // The shape regex above passes all of these; Date.UTC ROLLS them over
+    // instead of rejecting, so before this guard "2024-01-99" was sent as
+    // `gt 2024-04-07T23:59:59` and "0000-00-00" as `gt 1899-11-29T23:59:59`,
+    // while the query echo still reported what was typed.
+    for (const bad of ["2024-01-99", "2024-13-45", "0000-00-00", "2023-02-29", "2024-04-31"]) {
+      const res: any = await call("top_cases", { found_after: bad });
+      expect(res.isError, `found_after ${bad} should be refused`).toBe(true);
+      expect(res.content[0].text).toContain(bad);
+      expect(res.content[0].text).toMatch(/not a real calendar date/i);
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+    // found_before gets the same treatment, named as itself.
+    const res: any = await call("top_cases", { found_before: "2024-02-30" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("found_before");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a rolled-over bound can no longer walk past the transposed-window guard", async () => {
+    // The order check in dateFilters compares the RAW strings, so "2024-01-99"
+    // sorts before "2024-02-01" and the pair passed it -- then built
+    // `gt 2024-04-07T23:59:59 AND lt 2024-02-02T00:00:00`, the exact
+    // unsatisfiable filter that guard exists to refuse. DOL answers 204 and
+    // this server renders it as a clean count 0.
+    const res: any = await call("top_cases", { found_after: "2024-01-99", found_before: "2024-02-01" });
+    expect(res.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("real calendar edges are still accepted (leap day, month ends)", async () => {
+    for (const good of ["2024-02-29", "2024-01-31", "2024-04-30", "2024-12-31", "1900-01-01"]) {
+      fetchMock.mockResolvedValueOnce(jsonResponse([]));
+      const res: any = await call("top_cases", { found_after: good });
+      expect(res.isError, `found_after ${good} should be accepted`).toBeFalsy();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
   it("top_cases works with no filters at all (national biggest cases)", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse([{ case_id: "9", trade_nm: "BIG CO", bw_atp_amt: "5000000" }]));
     const body = payload(await call("top_cases", {}));

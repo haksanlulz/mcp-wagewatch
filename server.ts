@@ -447,12 +447,30 @@ function normState(v: unknown): string {
   return s.toUpperCase();
 }
 
-/** Validate an optional ISO date (YYYY-MM-DD), or throw. */
+/** Validate an optional ISO date (YYYY-MM-DD) that is also a real date, or throw. */
 function normDate(v: unknown, label: string): string | undefined {
   const s = str(v);
   if (!s) return undefined;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
     throw new Error(`${label} must be an ISO date (YYYY-MM-DD); got: ${JSON.stringify(v)}`);
+  }
+  // The shape is not the calendar. shiftIsoDate goes through Date.UTC, which
+  // ROLLS an out-of-range component over instead of rejecting it: "2024-01-99"
+  // becomes 2024-04-08 and "0000-00-00" becomes 1899-11-30, silently, while the
+  // query echo still reports what was typed. A rolled-over bound also walks
+  // straight through the order check in dateFilters, which compares the RAW
+  // strings: "2024-01-99" sorts before "2024-02-01", so that pair built
+  // `gt 2024-04-07T23:59:59 AND lt 2024-02-02T00:00:00` -- the unsatisfiable
+  // filter that check exists to refuse, answered 204 and rendered as a clean
+  // count 0. Require the date to survive a UTC round trip: that is the only
+  // cheap test that no rollover happened.
+  const [y, m, d] = s.split("-").map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d));
+  if (at.getUTCFullYear() !== y || at.getUTCMonth() + 1 !== m || at.getUTCDate() !== d) {
+    throw new Error(
+      `${label} is not a real calendar date: ${JSON.stringify(v)}. Nothing was queried -- a rolled-over date ` +
+        'would answer "no cases found" for a window you did not ask for.',
+    );
   }
   return s;
 }
