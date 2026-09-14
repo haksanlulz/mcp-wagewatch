@@ -119,7 +119,7 @@ Without the key the tools return an error naming the variable and the key-signup
 | `DOL_CACHE_TTL_MS` | `86400000` (a day) | Lifetime of a cached response. `0` disables the cache. |
 | `DOL_CACHE_MAX` | `300` | Cached responses kept before the oldest is evicted. |
 
-Each is read per use and validated: a value that is not a whole number in range is ignored, with a one-line note on stderr, and the default applies. A NaN attempt ceiling used to skip the request loop entirely and surface as `Error: undefined`, and a NaN TTL is a cache that never expires — which is this server's stated worst failure.
+Each is read per use and validated: a value that is not a whole number in range is ignored, with a one-line note on stderr, and the default applies. The cache holds whole WHISARD rows, and a row is about 2.8 KB across 110 columns (measured 2026-09-14), so a `back_wages_summary` answer at the default `max_cases` of 1000 is a ~2.8 MB entry — lower `DOL_CACHE_MAX` if a long-lived process makes many large aggregate queries. A NaN attempt ceiling used to skip the request loop entirely and surface as `Error: undefined`, and a NaN TTL is a cache that never expires — which is this server's stated worst failure.
 
 ## Response shape
 
