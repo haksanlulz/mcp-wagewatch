@@ -877,6 +877,22 @@ async function pageWithProbe(params: Omit<QueryParams, "limit">, limit: number):
   return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
 }
 
+/**
+ * The sentence a truncated page says, for every list tool.
+ *
+ * has_more is the machine-readable half and was always reported. The note is
+ * the half a human -- or a model summarising the answer in prose -- actually
+ * reads, and two of the four list tools did not emit it: top_cases had no
+ * `note` key at all, and flagged_employers' note is a static flag-semantics
+ * explanation that never varied with hasMore. So the same truncation was
+ * spelled out on employer_violations and violations_by_state and silent on the
+ * other two, which is exactly the inconsistency that teaches a caller the note
+ * can be trusted to mention it.
+ */
+function truncationNote(limit: number): string {
+  return `More cases match than the ${limit} shown (largest back wages first); raise limit or narrow the query.`;
+}
+
 async function employerViolations(args: Row): Promise<unknown> {
   const employer = str(args.employer);
   if (!employer) throw new Error("employer is required.");
@@ -896,11 +912,7 @@ async function employerViolations(args: Row): Promise<unknown> {
     },
     count: rows.length,
     has_more: hasMore,
-    note: hasMore
-      ? `More cases match than the ${limit} shown (largest back wages first); raise limit or narrow the query.`
-      : rows.length === 0
-        ? CASE_RETRY_HINT
-        : undefined,
+    note: hasMore ? truncationNote(limit) : rows.length === 0 ? CASE_RETRY_HINT : undefined,
     cases: rows.map(normalizeCase),
   };
 }
@@ -925,6 +937,7 @@ async function topCases(args: Row): Promise<unknown> {
     },
     count: rows.length,
     has_more: hasMore,
+    note: hasMore ? truncationNote(limit) : undefined,
     cases: rows.map(normalizeCase),
   };
 }
@@ -965,6 +978,7 @@ async function flaggedEmployers(args: Row): Promise<unknown> {
     count: rows.length,
     has_more: hasMore,
     note:
+      (hasMore ? truncationNote(limit) + " " : "") +
       "flsa_repeat_violator is WHD's own flag (its data dictionary publishes R = repeat, W = willful, " +
       "RW = both). The flag reflects WHD's characterization at case conclusion, not a court finding. " +
       `flag="${flag}" searches ${matched.join(" and ")}, because RW is a separate stored value: an ` +
@@ -1074,7 +1088,7 @@ async function violationsByState(args: Row): Promise<unknown> {
     },
     count: rows.length,
     has_more: hasMore,
-    note: hasMore ? `More cases match than the ${limit} shown (largest back wages first); raise limit or narrow the query.` : undefined,
+    note: hasMore ? truncationNote(limit) : undefined,
     cases: rows.map(normalizeCase),
   };
 }

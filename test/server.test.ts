@@ -842,6 +842,59 @@ describe("wagewatch 1.1.0", () => {
     expect(body.note).toBeUndefined();
   });
 
+  it("every list tool says the page was truncated, not only the two that did (F1)", async () => {
+    // has_more was always reported; the NOTE was not. top_cases carried no
+    // `note` key at all and flagged_employers' note is a static flag-semantics
+    // string that never varied with hasMore, so a caller reading the prose half
+    // of the answer -- a human, or a model summarising it -- learned about
+    // truncation on employer_violations and violations_by_state and not on the
+    // other two. Assert the property on all four, so a fifth cannot reopen it.
+    const page = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        case_id: String(i + 1),
+        trade_nm: "ACME",
+        st_cd: "NY",
+        bw_atp_amt: "100",
+        flsa_repeat_violator: "R",
+      }));
+    for (const [tool, args] of [
+      ["employer_violations", { employer: "acme" }],
+      ["top_cases", {}],
+      ["violations_by_state", { state: "NY" }],
+      ["flagged_employers", {}],
+    ] as const) {
+      fetchMock.mockResolvedValueOnce(jsonResponse(page(6)));
+      const body = payload(await call(tool, { ...args, limit: 5 }));
+      expect(body.has_more, `${tool} has_more`).toBe(true);
+      expect(String(body.note), `${tool} note`).toContain("More cases match than the 5 shown");
+
+      // Same params, so the truncated page above is still in the response
+      // cache; drop it or the complete-page half reads the cached rows.
+      clearDolCache();
+      fetchMock.mockResolvedValueOnce(jsonResponse(page(2)));
+      const whole = payload(await call(tool, { ...args, limit: 5 }));
+      expect(whole.has_more, `${tool} has_more on a complete page`).toBe(false);
+      // A complete page never claims truncation. flagged_employers still
+      // carries its standing flag-semantics note, so this is the sentence, not
+      // the field.
+      expect(String(whole.note ?? ""), `${tool} note on a complete page`).not.toContain("More cases match");
+    }
+  });
+
+  it("flagged_employers keeps its flag-semantics note alongside the truncation one (F1)", async () => {
+    const rows = Array.from({ length: 6 }, (_, i) => ({
+      case_id: String(i + 1),
+      trade_nm: "ACME",
+      flsa_repeat_violator: "RW",
+    }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(rows));
+    const body = payload(await call("flagged_employers", { limit: 5 }));
+    expect(String(body.note)).toContain("More cases match than the 5 shown");
+    // The reason this tool exists is still explained in the same field.
+    expect(String(body.note)).toContain("flsa_repeat_violator is WHD's own flag");
+    expect(String(body.note)).toContain("RW is a separate stored value");
+  });
+
   it("date filters ride findings_end_date as INCLUSIVE gt/lt filter nodes", async () => {
     // DOL has no gte/lte and findings_end_date is a midnight timestamp, so an
     // inclusive bound is expressed as the instant just outside it. A bare
