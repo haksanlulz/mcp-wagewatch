@@ -44,6 +44,7 @@ Sources:
 | `case_violtn_cnt` (total case violations) | `violations` |
 | sum of statute-level `*_cmp_assd_amt` | `civil_penalties` |
 | `cmp_assd_cnt` (count of assessments) | `cmp_assessment_count` (case_detail only) |
+| `flsa_repeat_violator` (WHD repeat/willful flag) | `flsa_repeat_violator` (`case_detail` and `flagged_employers` only) |
 
 Notes:
 - There is no single total-CMP-dollar column in WHISARD. `cmp_assd_cnt` is a count of assessments; the dollar penalties live in per-statute columns (`flsa_cmp_assd_amt`, `mspa_cmp_assd_amt`, `h1b_cmp_assd_amt`, and so on). `civil_penalties` sums those.

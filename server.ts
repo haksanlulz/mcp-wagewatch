@@ -705,7 +705,11 @@ async function flaggedEmployers(args: Row): Promise<unknown> {
       "RW = both). The flag reflects WHD's characterization at case conclusion, not a court finding. " +
       `flag="${flag}" searches ${matched.join(" and ")}, because RW is a separate stored value: an ` +
       "employer flagged both repeat and willful belongs in the repeat list and in the willful list.",
-    cases: rows.map(normalizeCase),
+    // The flag itself rides each case HERE and nowhere else: it is the only
+    // reason this tool exists, and without it a caller cannot tell R from RW
+    // without one case_detail call per case. Deliberately not added to
+    // normalizeCase -- the other list tools' shape is documented and stays put.
+    cases: rows.map((row) => ({ ...normalizeCase(row), flsa_repeat_violator: str(row.flsa_repeat_violator) })),
   };
 }
 

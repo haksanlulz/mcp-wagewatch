@@ -548,6 +548,39 @@ describe("wagewatch 1.1.0", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("each flagged case carries the flag it was matched on", async () => {
+    // Without this the one tool whose entire purpose is the flag returned a list
+    // in which no case states its flag, and telling R from RW cost one
+    // case_detail call per case.
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse([
+        { case_id: "3", trade_nm: "Repeat Co", flsa_repeat_violator: "R", bw_atp_amt: "900" },
+        { case_id: "4", trade_nm: "Both Co", flsa_repeat_violator: "RW", bw_atp_amt: "800" },
+        { case_id: "5", trade_nm: "Blank Co", bw_atp_amt: "700" },
+      ]),
+    );
+    const body = payload(await call("flagged_employers", {}));
+    expect(body.cases.map((c: any) => c.flsa_repeat_violator)).toEqual(["R", "RW", null]);
+    expect(body.cases[1].employer).toBe("Both Co"); // still a normalized case
+  });
+
+  it("no other list tool grew the flag field", async () => {
+    // ROW_TYSON carries flsa_repeat_violator: "R". employer_violations must not
+    // start reporting it -- the field map documents it as flagged_employers and
+    // case_detail only.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON] }));
+    const ev = payload(await call("employer_violations", { employer: "tyson" }));
+    expect(ev.cases[0]).not.toHaveProperty("flsa_repeat_violator");
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON] }));
+    const vbs = payload(await call("violations_by_state", { state: "AR" }));
+    expect(vbs.cases[0]).not.toHaveProperty("flsa_repeat_violator");
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON] }));
+    const tc = payload(await call("top_cases", {}));
+    expect(tc.cases[0]).not.toHaveProperty("flsa_repeat_violator");
+  });
+
   it("array filter values survive serialization as an array of strings", async () => {
     // stringifyFilterValues maps arrays elementwise; if it stringified the array
     // itself the `in` filter would become the literal "R,RW" and match nothing.
