@@ -38,24 +38,12 @@ const THROTTLE_MS = 150;
 const MAX_PAGE = 100;
 const SUMMARY_CAP = 1000;
 
-// Per-statute civil-money-penalty dollar columns. WHISARD has NO single total-CMP
-// dollar field (cmp_assd_cnt is a COUNT of assessments), so a dollar total must be
-// summed across the statute-level *_cmp_assd_amt columns below. Used to restrict
-// the `fields` payload for back_wages_summary; the full-row tools scan every
-// *_cmp_assd_amt key dynamically instead.
-const CMP_AMOUNT_FIELDS = [
-  "flsa_cmp_assd_amt",
-  "mspa_cmp_assd_amt",
-  "h1b_cmp_assd_amt",
-  "fmla_cmp_assd_amt",
-  "flsa_cl_cmp_assd_amt",
-  "h2a_cmp_assd_amt",
-  "osha_cmp_assd_amt",
-  "eppa_cmp_assd_amt",
-  "h1a_cmp_assd_amt",
-  "crew_cmp_assd_amt",
-  "flsa_hmwkr_cmp_assd_amt",
-];
+// WHISARD has NO single total-CMP dollar field (cmp_assd_cnt is a COUNT of
+// assessments), so a dollar total is summed across the statute-level
+// *_cmp_assd_amt columns. That rule has exactly one owner — the pattern in
+// totalCivilPenalties, which scans whatever the row carries. A hardcoded list
+// of the eleven column names used to sit here as well, restricting
+// back_wages_summary's `fields` payload; see that tool for why it is gone.
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -889,21 +877,28 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   if (state) parts.push({ field: "st_cd", operator: "eq", value: state });
   const filter: FilterObject = parts.length === 1 ? parts[0] : { and: parts };
 
-  const fields = [
-    "case_id",
-    "bw_atp_amt",
-    "ee_violtd_cnt",
-    "case_violtn_cnt",
-    "findings_start_date",
-    "findings_end_date",
-    ...CMP_AMOUNT_FIELDS,
-  ];
-  // cap + 1, the same probe row every list tool uses for has_more. Without it
+  // No `fields` projection. totalCivilPenalties scans every *_cmp_assd_amt key
+  // on the row by design, and the README documents that one rule for all three
+  // tools that report penalties — but this tool used to restrict the request to
+  // an 11-name hardcoded list and then run that open-ended scan over the
+  // truncated row. Two owners for one fact: the day WHD carries a statute
+  // column the list does not name, this tool's total and case_detail's disagree
+  // on the same case, silently and in the safe-looking direction.
+  //
+  // The list was the complete live set when it was written and still is (110
+  // columns on a real row 2026-09-14, 11 of them *_cmp_assd_amt, all 11 named),
+  // so nothing is under-counted today and nothing was: the defect is that the
+  // list has to be maintained against a schema this code does not control.
+  // Measured cost of dropping it, same day: an unprojected 1000-row page is
+  // 2.8 MB in 3.7 s — inside DOL's 5 MB per-request ceiling and this server's
+  // 15 s timeout — and every other tool here already fetches whole rows.
+  //
+  // cap + 1 is the same probe row every list tool uses for has_more. Without it
   // `capped` is true whenever the page is full, so a total whose true match
   // count is EXACTLY max_cases was published under a note calling it a floor —
   // on the one tool whose output is a dollar figure a caseworker cites. The
   // extra row is fetched and then dropped, never summed.
-  const fetched = await dolGet({ limit: cap + 1, filter, fields });
+  const fetched = await dolGet({ limit: cap + 1, filter });
   const rows = fetched.slice(0, cap);
 
   let totalBackWages = 0;

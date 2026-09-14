@@ -415,6 +415,38 @@ describe("back_wages_summary", () => {
     expect(body.capped).toBe(false);
   });
 
+  it("counts a civil-penalty column the old allow-list did not name", async () => {
+    // totalCivilPenalties scans every *_cmp_assd_amt key on the row, on purpose
+    // and by the same rule the README documents for all three tools that report
+    // penalties. back_wages_summary used to restrict its request to an 11-name
+    // hardcoded list and then run that open-ended scan over the truncated row,
+    // so the same fact had two owners: a statute column WHD adds tomorrow would
+    // be counted by case_detail and dropped by the aggregate, silently.
+    //
+    // The 11 names were the complete live set on 2026-09-14 (110 columns on a
+    // real row, 11 of them *_cmp_assd_amt), so this is the FUTURE column, not a
+    // present miss — which is why no projection is the fix rather than a longer
+    // list. Cost measured the same day: an unprojected 1000-row page is 2.8 MB
+    // in 3.7 s, inside DOL's 5 MB ceiling and this server's 15 s timeout, and
+    // every other tool already fetches whole rows.
+    const withNewStatute: Record<string, unknown> = { ...ROW_SMALL, dbra_cmp_assd_amt: "750" };
+    // The mock honours `fields` the way DOL does — a projected column is simply
+    // not on the row that comes back. Without that, a projection bug is
+    // invisible to a mocked suite, which is how this one survived.
+    fetchMock.mockImplementationOnce(async (url: URL) => {
+      const fields = url.searchParams.get("fields");
+      const kept =
+        fields == null
+          ? withNewStatute
+          : Object.fromEntries(Object.entries(withNewStatute).filter(([k]) => fields.split(",").includes(k)));
+      return jsonResponse({ data: [kept] });
+    });
+    const body = payload(await call("back_wages_summary", { employer: "tyson" }));
+    expect(body.total_civil_penalties).toBe(1750); // 1000 flsa + 750 the list never named
+    // No projection at all: a `fields` list is what made the divergence possible.
+    expect(lastUrl().searchParams.get("fields")).toBeNull();
+  });
+
   it("an exact-max_cases total is not called a floor", async () => {
     // rows.length >= cap is true when the true match count is exactly cap, so
     // an EXACT total was published under a note saying the totals are a floor.
