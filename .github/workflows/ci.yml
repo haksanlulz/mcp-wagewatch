@@ -68,6 +68,44 @@ jobs:
           path: "*.tgz"
           retention-days: 1
 
+  # The live upstream contract. Nothing in CI ran `npm run smoke`, so its
+  # assertions fired only when someone typed the command — and this is the only
+  # rung that can redden four of this repo's own claims, each of which the
+  # mocked suite can assert the REQUEST for and nothing more: the case-variant
+  # name search (a DOL that matched differently would answer zero and the
+  # request assertions would stay green), the `in`-array flag filter, the
+  # inclusive `T23:59:59` bound form, and back_wages_summary's aggregate over
+  # whole rows.
+  #
+  # Manual trigger, not every push: DOL rate-limits hard enough that a full run
+  # plus a few ad-hoc queries draws a multi-minute stretch of 429s. Exit 2
+  # (upstream unavailable) is distinct from exit 1 (a failed assertion), and
+  # `continue-on-error` is deliberately absent so neither reads as a pass.
+  smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # smoke.ts prints a skip notice and exits 0 with no key, which is right
+      # for a contributor and wrong for a job whose green is read as evidence.
+      # A skip is not a pass, so an absent secret fails here instead.
+      - name: the key has to be present, or the rung measures nothing
+        env:
+          DOL_API_KEY: ${{ secrets.DOL_API_KEY }}
+        run: |
+          if [ -z "$DOL_API_KEY" ]; then
+            echo "DOL_API_KEY secret is not set; npm run smoke would skip and exit 0."
+            exit 1
+          fi
+      - run: npm run smoke
+        env:
+          DOL_API_KEY: ${{ secrets.DOL_API_KEY }}
+
   # Stage 2: what a stranger actually does — install the published tarball and
   # speak MCP to it. Node 18 is here and nowhere else, because this is the only
   # stage that does not need the dev toolchain.

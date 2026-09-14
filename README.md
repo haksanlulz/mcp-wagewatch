@@ -199,6 +199,7 @@ Two tiers, split by script. No test markers; the split is which command you run.
 ```
 npm test           # offline: vitest, fetch mocked with the documented response shapes, no key needed
 npm run smoke      # live: one real call per tool against the DOL API (needs DOL_API_KEY; skips and exits 0 without it)
+                   #   also a manual CI job -- Actions > CI > Run workflow -- which fails rather than skips when the secret is absent
 npm run typecheck   # both tsconfigs: the shipped surface, then smoke.ts and test/ too
 npm run verify:pack  # packs the tarball, installs it in a throwaway project, launches through the bin shim, speaks MCP
 npm run verify:mcpb  # packs the .mcpb bundle, extracts it cold, launches the manifest's entry_point, speaks MCP
