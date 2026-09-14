@@ -507,9 +507,55 @@ describe("wagewatch 1.1.0", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse([{ case_id: "3", trade_nm: "REPEAT CO", flsa_repeat_violator: "R", bw_atp_amt: "900" }]));
     const body = payload(await call("flagged_employers", { state: "NY" }));
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
-    expect(filter.and).toContainEqual({ field: "flsa_repeat_violator", operator: "eq", value: "R" });
+    expect(filter.and).toContainEqual({ field: "flsa_repeat_violator", operator: "in", value: ["R", "RW"] });
     expect(String(body.note)).toContain("not a court finding");
     expect(body).toHaveProperty("data_currency");
+  });
+
+  it("the default repeat search includes the RW (repeat AND willful) rows", async () => {
+    // eq "R" matched the literal "R" only, so the most serious category -- an
+    // employer WHD flagged both repeat and willful -- was absent from the list
+    // whose whole purpose is repeat violators. Live: eq "RW" returns case_id
+    // 1476714 and 1461405, and neither can reach an eq "R" result.
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("flagged_employers", {});
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    expect(filter).toEqual({ field: "flsa_repeat_violator", operator: "in", value: ["R", "RW"] });
+  });
+
+  it("the willful search includes RW too, and reports which flags it matched", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    const body = payload(await call("flagged_employers", { flag: "w" }));
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    expect(filter).toEqual({ field: "flsa_repeat_violator", operator: "in", value: ["W", "RW"] });
+    expect(body.query.flag).toBe("W");
+    expect(body.query.matched_flags).toEqual(["W", "RW"]);
+  });
+
+  it("RW searches only the both-flags rows", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("flagged_employers", { flag: "RW" });
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    expect(filter).toEqual({ field: "flsa_repeat_violator", operator: "in", value: ["RW"] });
+  });
+
+  it("rejects a flag outside R/W/RW before any network call, naming the three", async () => {
+    // Free text reached the filter and came back a clean zero-result answer,
+    // which reads as "no flagged employers" rather than "that is not a flag".
+    const res: any = await call("flagged_employers", { flag: "repeat" });
+    expect(res.isError).toBe(true);
+    for (const legal of ["R", "W", "RW"]) expect(res.content[0].text).toContain(legal);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("array filter values survive serialization as an array of strings", async () => {
+    // stringifyFilterValues maps arrays elementwise; if it stringified the array
+    // itself the `in` filter would become the literal "R,RW" and match nothing.
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    await call("flagged_employers", {});
+    const raw = lastUrl().searchParams.get("filter_object")!;
+    expect(raw).toContain('"value":["R","RW"]');
+    expect(JSON.parse(raw).value).toEqual(["R", "RW"]);
   });
 });
 

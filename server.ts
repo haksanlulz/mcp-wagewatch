@@ -551,13 +551,19 @@ const TOOLS: Tool[] = [
     name: "flagged_employers",
     description:
       "WHD cases carrying the dataset's FLSA repeat/willful violator flag, optionally in a state. " +
-      "The flag values are WHD's own (per its data dictionary: R = repeat, W = willful, RW = both); " +
-      "pass a different flag value to search another. Ordered by back wages.",
+      "The flag values are WHD's own (per its data dictionary: R = repeat, W = willful, RW = both). " +
+      "R also returns RW cases and W also returns RW cases, so an employer flagged both appears in " +
+      "either search. Ordered by back wages.",
     inputSchema: {
       type: "object",
       properties: {
         state: { type: "string", description: 'Optional 2-letter state code.' },
-        flag: { type: "string", description: 'Flag value to match exactly (default "R"). WHD publishes R / W / RW.' },
+        flag: {
+          type: "string",
+          description:
+            'Which WHD flag to search: "R" (repeat, default) and "W" (willful) each also return the "RW" ' +
+            '(both) cases; "RW" returns only cases flagged both. R, W and RW are the only accepted values.',
+        },
         limit: { type: "integer", description: `Max cases to return (1-${MAX_PAGE}, default 20).` },
       },
       additionalProperties: false,
@@ -659,22 +665,46 @@ async function topCases(args: Row): Promise<unknown> {
   };
 }
 
+/**
+ * Which stored flag values each requested flag searches. WHD publishes three
+ * (R = repeat, W = willful, RW = both), and RW is a distinct literal: an `eq "R"`
+ * filter matches the string "R" only, so it silently excluded every
+ * repeat-AND-willful employer from the repeat search. Verified live 2026-09-14:
+ * `eq "RW"` returns case_id 1461405 (Sam's Chevron, AZ) and case_id 1476714
+ * (Kevin Misch Excavating, IN); `eq "W"` returns case_id 1594970 (Advanced
+ * Information Systems, WA). DOL's operator set includes `in`, which accepts an
+ * array value (live-verified, and stringifyFilterValues maps arrays elementwise).
+ */
+const FLAG_SEARCHES: Record<string, string[]> = {
+  R: ["R", "RW"],
+  W: ["W", "RW"],
+  RW: ["RW"],
+};
+
 async function flaggedEmployers(args: Row): Promise<unknown> {
   const state = args.state != null && args.state !== "" ? normState(args.state) : null;
-  const flag = str(args.flag) ?? "R";
+  const flag = (str(args.flag) ?? "R").toUpperCase();
+  const matched = FLAG_SEARCHES[flag];
+  if (!matched) {
+    throw new Error(
+      `flag must be one of R (repeat), W (willful) or RW (both repeat and willful); got: ${JSON.stringify(args.flag)}`,
+    );
+  }
   const limit = clampLimit(args.limit, 20);
 
-  const parts: FilterObject[] = [{ field: "flsa_repeat_violator", operator: "eq", value: flag }];
+  const parts: FilterObject[] = [{ field: "flsa_repeat_violator", operator: "in", value: matched }];
   if (state) parts.push({ field: "st_cd", operator: "eq", value: state });
 
   const { rows, hasMore } = await pageWithProbe({ filter: andAll(parts), sort_by: "bw_atp_amt", sort: "desc" }, limit);
   return {
-    query: { state, flag },
+    query: { state, flag, matched_flags: matched },
     count: rows.length,
     has_more: hasMore,
     note:
       "flsa_repeat_violator is WHD's own flag (its data dictionary publishes R = repeat, W = willful, " +
-      "RW = both). The flag reflects WHD's characterization at case conclusion, not a court finding.",
+      "RW = both). The flag reflects WHD's characterization at case conclusion, not a court finding. " +
+      `flag="${flag}" searches ${matched.join(" and ")}, because RW is a separate stored value: an ` +
+      "employer flagged both repeat and willful belongs in the repeat list and in the willful list.",
     cases: rows.map(normalizeCase),
   };
 }
