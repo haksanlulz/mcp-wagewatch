@@ -57,7 +57,7 @@ Notes:
 - `found_after` and `found_before` are **inclusive**: a case whose findings ended on the exact date is included. DOL's operators are `eq`/`neq`/`gt`/`lt`/`in`/`not_in`/`like` with no `gte`/`lte`, and `findings_end_date` is a midnight timestamp, so each bound is shifted one day outward to the instant just outside the window.
 - **A zero-match filter answers HTTP 204 with an empty body** (confirmed live) — the server parses that as an empty result set, so "no concluded case found" is a real answer: `count: 0`, `has_more: false`, and the data-currency note that absence is not evidence of compliance.
 - **All `filter_object` values must be JSON strings** — the engine answers a 500 "server error querying the dataset" for numeric values (`{"value": 0}` fails, `{"value": "0"}` works; confirmed live). Every filter value is string-coerced at serialization time.
-- List tools request `limit + 1` rows and report `has_more`, so a page of exactly `limit` rows is never mistakable for a complete answer.
+- List tools request `limit + 1` rows and report `has_more`, so a page of exactly `limit` rows is never mistakable for a complete answer. `back_wages_summary` does the same with `max_cases` and reports `capped`, so a total whose true match count is exactly `max_cases` is a total rather than a floor.
 
 ## Install
 
