@@ -918,6 +918,32 @@ describe("wagewatch 1.1.0", () => {
     }
   });
 
+  it("stops telling a caller at the page ceiling to raise limit (R3)", async () => {
+    // clampLimit caps at 100 and no tool exposes offset, so at the ceiling
+    // "raise limit" is advice that cannot be followed: asking for 500 is
+    // clamped back to 100 and answers the same note again. The note is the only
+    // thing a prose reader sees, so it has to say what actually works.
+    const rows = Array.from({ length: 101 }, (_, i) => ({
+      case_id: String(i + 1),
+      trade_nm: "ACME",
+      bw_atp_amt: "100",
+    }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(rows));
+    const body = payload(await call("employer_violations", { employer: "acme", limit: 100 }));
+    expect(body.has_more).toBe(true);
+    expect(String(body.note)).toContain("More cases match than the 100 shown");
+    expect(String(body.note)).toContain("page ceiling");
+    expect(String(body.note)).toContain("narrow the query");
+    expect(String(body.note)).not.toContain("raise limit");
+
+    // A limit the caller CAN still raise keeps the actionable half, and names
+    // the ceiling so the next step is one call rather than two.
+    clearDolCache();
+    fetchMock.mockResolvedValueOnce(jsonResponse(rows.slice(0, 6)));
+    const under = payload(await call("employer_violations", { employer: "acme", limit: 5 }));
+    expect(String(under.note)).toContain("raise limit (up to 100)");
+  });
+
   it("flagged_employers keeps its flag-semantics note alongside the truncation one (F1)", async () => {
     const rows = Array.from({ length: 6 }, (_, i) => ({
       case_id: String(i + 1),

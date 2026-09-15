@@ -923,9 +923,18 @@ async function pageWithProbe(params: Omit<QueryParams, "limit">, limit: number):
  * spelled out on employer_violations and violations_by_state and silent on the
  * other two, which is exactly the inconsistency that teaches a caller the note
  * can be trusted to mention it.
+ *
+ * Two sentences, because "raise limit" stops being an instruction at the page
+ * ceiling. clampLimit caps limit at MAX_PAGE and no tool exposes `offset`, so a
+ * caller already at 100 who follows the advice and asks for 500 is silently
+ * clamped back to 100 and handed the same note again. At the ceiling the only
+ * thing that reaches the rest of the matches is a narrower query, and the note
+ * is the one place a prose reader learns that.
  */
 function truncationNote(limit: number): string {
-  return `More cases match than the ${limit} shown (largest back wages first); raise limit or narrow the query.`;
+  return limit >= MAX_PAGE
+    ? `More cases match than the ${limit} shown (largest back wages first); ${MAX_PAGE} is this tool's page ceiling and there is no offset, so narrow the query -- by state, industry or date window -- to reach the rest.`
+    : `More cases match than the ${limit} shown (largest back wages first); raise limit (up to ${MAX_PAGE}) or narrow the query.`;
 }
 
 async function employerViolations(args: Row): Promise<unknown> {
