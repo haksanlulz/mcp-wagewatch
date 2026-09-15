@@ -618,7 +618,7 @@ function shiftIsoDate(iso: string, days: number): string {
  * Every escaped form answers zero. So the escaping this function used to do
  * turned a term carrying `%`, `_` or `\` into a pattern hunting a literal
  * backslash — on this dataset the worst available answer, a confident "no cases
- * found", reached by a caller typing a character we told them was safe.
+ * found", reached by a caller typing a character the docs called safe.
  *
  * Passing the metacharacter THROUGH over-matches instead: `_` widens to any one
  * character and `%` to any run. That is the recoverable direction — extra rows
