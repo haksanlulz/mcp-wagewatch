@@ -452,16 +452,73 @@ describe("employer_violations", () => {
 describe("back_wages_summary", () => {
   it("asks for the largest cases first, so a capped floor is the strongest one (R6)", async () => {
     // The only query in this file that carried no sort_by. Uncapped it makes no
-    // difference to the totals; capped it decides WHICH cases are summed, and
-    // which row's date becomes latest_findings_end -- i.e. the vintage
-    // data_currency reports. Unsorted, a capped answer could state a vintage
-    // years older than the newest matching case while the SPEC says an answer
-    // is exactly as current as its newest row.
+    // difference to the totals; capped it decides WHICH cases are summed, so the
+    // floor is now the strongest one available rather than an arbitrary one.
+    //
+    // This case ASSERTS THE SORT AND NOTHING MORE. It used to carry a comment
+    // claiming the sort also fixed the vintage; it does not, and the case below
+    // is the one that measures what actually happens to the date.
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
     await call("back_wages_summary", { employer: "tyson", max_cases: 2 });
     const url = lastUrl();
     expect(url.searchParams.get("sort_by")).toBe("bw_atp_amt");
     expect(url.searchParams.get("sort")).toBe("desc");
+  });
+
+  it("says which population a capped latest_findings_end came from (C1)", async () => {
+    // Sorting by back wages makes the floor the strongest one available and does
+    // NOTHING for the date: latest_findings_end is the max over the rows SUMMED,
+    // and those are the `cap` LARGEST cases -- an arbitrary subset in the date
+    // dimension. Three matching rows in bw_atp_amt desc order, max_cases 2: the
+    // newest case is the $10 one from 2026, it arrives as the probe row, and it
+    // is dropped undated. The answer's vintage is then 2003, 23 years stale, on
+    // the tool whose output a caseworker pastes into a letter -- and capping is
+    // the DEFAULT path, since any state-only query exceeds max_cases 1000.
+    //
+    // A second request could fetch the true newest date; it costs a round trip
+    // against the throttle on the default path. Naming the population costs
+    // nothing, and the SPEC's requirement is that an answer state its vintage
+    // honestly, not that it be maximally current.
+    const row = (bw: number, end: string) => ({
+      case_id: `c-${bw}`,
+      trade_nm: "ACME",
+      st_cd: "NY",
+      bw_atp_amt: bw,
+      findings_end_date: end,
+    });
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        data: [row(900000, "2001-01-01T00:00:00"), row(500000, "2003-01-01T00:00:00"), row(10, "2026-01-01T00:00:00")],
+      }),
+    );
+    const res = await call("back_wages_summary", { state: "NY", max_cases: 2 });
+    const body = payload(res);
+
+    // The defect, still present and now stated rather than hidden.
+    expect(body.capped).toBe(true);
+    expect(body.latest_findings_end).toBe("2003-01-01T00:00:00");
+    expect(body.data_currency.newest_findings_end_date).toBe("2003-01-01T00:00:00");
+
+    // The note has to name the population the date came from, and say the
+    // newest matching case can be more recent -- otherwise the figure reads as
+    // the answer's vintage, which is this server's MUST NEVER.
+    const note = String(body.note);
+    expect(note).toContain("2 largest matching cases only");
+    expect(note).toMatch(/newest matching case may be far more recent/i);
+    expect(note).toMatch(/latest_findings_end/);
+    expect(note).toMatch(/newest_findings_end_date/);
+    // The totals half of the note is unchanged.
+    expect(note).toContain("the totals are a floor");
+  });
+
+  it("claims nothing about the vintage population when the answer is not capped", async () => {
+    // The qualifier is a statement about a capped subset. On a complete answer
+    // latest_findings_end IS the newest matching case, so the sentence would be
+    // false and its absence is the assertion.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
+    const body = payload(await call("back_wages_summary", { employer: "tyson", max_cases: 3 }));
+    expect(body.capped).toBe(false);
+    expect(String(body.note)).not.toMatch(/largest matching cases only/);
   });
 
   it("aggregates back wages, employees, penalties, and case count", async () => {

@@ -1125,14 +1125,26 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   //
   // Sorted like every list tool, and for this tool it changes the ANSWER rather
   // than the presentation. This was the only query here with no sort_by, so a
-  // capped aggregate summed whatever order DOL happened to return, with two
-  // consequences the `capped` note does not cover: the floor was built from an
-  // arbitrary subset rather than from the largest cases, so it was weaker than
-  // the strongest floor available; and latest_findings_end -- which is what
-  // data_currency reports as newest_findings_end_date -- was the newest date in
-  // that arbitrary subset, so a capped answer could state a vintage years older
-  // than the newest matching case while the SPEC asserts an answer is exactly as
-  // current as its newest row.
+  // capped aggregate summed whatever order DOL happened to return and the floor
+  // was built from an arbitrary subset rather than from the largest cases --
+  // weaker than the strongest floor available. The sort fixes that half.
+  //
+  // IT DOES NOT FIX THE VINTAGE, AND NO SORT CAN. latest_findings_end -- which
+  // data_currency republishes as newest_findings_end_date -- is the max over the
+  // rows SUMMED, and those are now the `cap` LARGEST matching cases, which is
+  // still an arbitrary subset in the DATE dimension. Measured over three
+  // matching rows ($900,000 ending 2001, $500,000 ending 2003, $10 ending 2026)
+  // at max_cases 2: the answer states a vintage of 2003, 23 years stale, and the
+  // 2026 case was in the very page fetched -- it arrived as the probe row and
+  // its date was discarded with it. Capping is the DEFAULT path, since any
+  // state-only query exceeds max_cases 1000.
+  //
+  // The SPEC says an answer is exactly as current as its newest row and must say
+  // so; the MUST NEVER is stale data presented as current. A second request
+  // (limit 1, sorted by findings_end_date) would fetch the true newest date, but
+  // that is a per-call round trip against a hard rate limiter on the default
+  // path. Naming the population the date came from costs nothing and is what the
+  // SPEC needs, so the note below does that whenever the answer is capped.
   const fetched = await dolGet({ limit: cap + 1, filter, sort_by: "bw_atp_amt", sort: "desc" });
   const rows = fetched.slice(0, cap);
 
@@ -1164,6 +1176,17 @@ async function backWagesSummary(args: Row): Promise<unknown> {
       "Aggregated client-side over matching cases (WHD data is one row per compliance action). " +
       "total_civil_penalties is the sum of statute-level civil money penalties. " +
       "capped=true means results hit max_cases and the totals are a floor." +
+      // The `capped` sentence above covers the TOTALS and nothing else. The
+      // vintage needs its own, because latest_findings_end reads as the answer's
+      // date rather than as a property of the subset it was computed over -- and
+      // data_currency then republishes it as newest_findings_end_date, which is
+      // the SPEC's own field. See the sort comment above for the measurement.
+      (fetched.length > cap
+        ? " Sorted by back wages, so on a capped answer latest_findings_end (and the " +
+          "newest_findings_end_date derived from it) is the newest date among the " +
+          `${cap} largest matching cases only -- the newest matching case may be far more ` +
+          "recent. Narrow the query, or raise max_cases, before citing this as the vintage."
+        : "") +
       // A $0 total reads as an employer with no wage-theft history, which is the
       // most citable thing this tool produces and the worst thing to get wrong.
       (employer && rows.length === 0 ? " " + CASE_RETRY_HINT : ""),
