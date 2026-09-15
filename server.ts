@@ -535,6 +535,43 @@ function normDate(v: unknown, label: string): string | undefined {
   return s;
 }
 
+/**
+ * Validate a NAICS code prefix, or throw.
+ *
+ * `naics` was the last closed-domain argument left unvalidated, and it produced
+ * exactly the confident zero normState, normDate and the flag check are each
+ * refused to prevent. `str()` passed anything through to
+ * `{naic_cd like "<term>%"}`, so a caller typing an industry NAME rather than a
+ * code got a legal filter DOL answers with no rows. Measured live 2026-09-15:
+ * `{naic_cd like "restaurant%"}` -> HTTP 204, zero rows, while
+ * `{naic_cd like "72%"}` -> HTTP 200 carrying naic_cd 722211, 722310, 722211.
+ * top_cases renders that 204 as count 0 with NO `note` key at all (it only
+ * emits one when hasMore), under the data_currency line saying no concluded
+ * published case was found -- so a mistyped industry is strictly QUIETER than a
+ * mistyped state, and the only prose the caller sees asserts a real absence.
+ *
+ * The domain is closed, so the typo can be refused instead of answered. Bound:
+ * over the 500 most recent rows by findings_end_date (measured the same day)
+ * every `naic_cd` is all digits, 2 to 6 of them, max length 6 -- so `\d{1,6}`
+ * accepts every legal prefix of every stored code and rejects nothing real.
+ *
+ * A LIKE metacharacter is passed through in a NAME search on purpose (see
+ * escapeLike: over-matching is the recoverable direction, and it is pinned by
+ * the employer-name case). In a numeric code it is a typo, not a search
+ * strategy, and under-matching is the only thing it can do.
+ */
+function normNaics(v: unknown): string | undefined {
+  const s = str(v);
+  if (!s) return undefined;
+  if (!/^\d{1,6}$/.test(s)) {
+    throw new Error(
+      `naics must be 1-6 digits of a NAICS code prefix (e.g. "72", "722511"); got: ${JSON.stringify(v)}. ` +
+        'Nothing was queried -- a non-numeric prefix is a legal filter that answers "no cases found".',
+    );
+  }
+  return s;
+}
+
 /** Levenshtein distance. Small inputs only — it exists to suggest a near-miss key. */
 function editDistance(a: string, b: string): number {
   let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
@@ -975,7 +1012,7 @@ async function employerViolations(args: Row): Promise<unknown> {
 
 async function topCases(args: Row): Promise<unknown> {
   const state = args.state != null && args.state !== "" ? normState(args.state) : null;
-  const naics = str(args.naics);
+  const naics = normNaics(args.naics);
   const limit = clampLimit(args.limit, 20);
 
   const parts: FilterObject[] = [{ field: "case_violtn_cnt", operator: "gt", value: 0 }];
@@ -1135,7 +1172,7 @@ async function backWagesSummary(args: Row): Promise<unknown> {
 
 async function violationsByState(args: Row): Promise<unknown> {
   const state = normState(args.state);
-  const naics = str(args.naics);
+  const naics = normNaics(args.naics);
   const limit = clampLimit(args.limit, 20);
 
   const parts: FilterObject[] = [

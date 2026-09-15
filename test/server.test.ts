@@ -716,20 +716,57 @@ describe("violations_by_state", () => {
 });
 
 describe("top_cases", () => {
-  it("filters by NAICS prefix, sending the term unescaped (R1)", async () => {
+  it("filters by NAICS prefix", async () => {
     // violations_by_state's identical path was pinned and this one was not.
     fetchMock.mockResolvedValueOnce(jsonResponse([]));
     await call("top_cases", { naics: "72" });
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
     expect(filter.and).toContainEqual({ field: "naic_cd", operator: "like", value: "72%" });
 
-    // The second half asserted `7\_2%` until 2026-09-14. DOL honours no escape
-    // character, so that pattern hunts a literal backslash and matches no NAICS
-    // code at all; unescaped, the `_` widens to any one digit.
-    fetchMock.mockResolvedValueOnce(jsonResponse([]));
-    await call("top_cases", { naics: "7_2" });
-    const metachar = JSON.parse(lastUrl().searchParams.get("filter_object")!);
-    expect(metachar.and).toContainEqual({ field: "naic_cd", operator: "like", value: "7_2%" });
+    // Every stored code length, so a validator cannot narrow the real domain:
+    // 2 to 6 digits, measured over the 500 most recent rows (2026-09-15).
+    for (const code of ["7", "72", "722", "7225", "72251", "722511"]) {
+      // "72" repeats the call above, which the response cache would serve
+      // without touching fetch, leaving lastUrl() pointing at the prior code.
+      clearDolCache();
+      fetchMock.mockResolvedValueOnce(jsonResponse([]));
+      const res: any = await call("top_cases", { naics: code });
+      expect(res.isError, `naics ${code} should be accepted`).toBeUndefined();
+      const nodes = JSON.parse(lastUrl().searchParams.get("filter_object")!).and;
+      expect(nodes).toContainEqual({ field: "naic_cd", operator: "like", value: `${code}%` });
+    }
+  });
+
+  it("refuses a NAICS prefix that is not digits, on both tools that take one (C2)", async () => {
+    // `naics` was the last closed-domain argument left unvalidated, and it is
+    // the QUIETEST confident zero in the server: live 2026-09-15,
+    // {naic_cd like "restaurant%"} answers HTTP 204, which top_cases renders as
+    // count 0 with no `note` key at all -- top_cases only emits a note when
+    // hasMore -- under the data_currency line saying no concluded published
+    // case was found. So a mistyped INDUSTRY was strictly quieter than a
+    // mistyped STATE, which normState has refused since round 2.
+    //
+    // This deliberately inverts the old second half of the prefix case above,
+    // which asserted that `7_2` rode through as a LIKE wildcard. That contract
+    // is R1's and it still holds where it matters -- an employer NAME, pinned
+    // by the metacharacter case -- because over-matching a name is recoverable.
+    // A `_` in a numeric code is a typo, and under-matching is all it can do.
+    // Only the blank cases reach the network; the rest throw before it.
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    for (const tool of ["top_cases", "violations_by_state"] as const) {
+      for (const bad of ["restaurant", "7_2", "72%", "72a", "", "  ", "7225113", "-72"]) {
+        const args = tool === "violations_by_state" ? { state: "NY", naics: bad } : { naics: bad };
+        const res: any = await call(tool, args);
+        if (bad.trim() === "") {
+          // An empty/blank prefix means "no industry filter", as it always did.
+          expect(res.isError, `${tool} should treat a blank naics as absent`).toBeUndefined();
+          continue;
+        }
+        expect(res.isError, `${tool} should refuse naics ${JSON.stringify(bad)}`).toBe(true);
+        expect(res.content[0].text).toMatch(/1-6 digits/i);
+        expect(res.content[0].text).toMatch(/Nothing was queried/i);
+      }
+    }
   });
 
   it("combines state, NAICS and a date window in one and-filter", async () => {
