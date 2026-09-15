@@ -1073,7 +1073,18 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   // count is EXACTLY max_cases was published under a note calling it a floor —
   // on the one tool whose output is a dollar figure a caseworker cites. The
   // extra row is fetched and then dropped, never summed.
-  const fetched = await dolGet({ limit: cap + 1, filter });
+  //
+  // Sorted like every list tool, and for this tool it changes the ANSWER rather
+  // than the presentation. This was the only query here with no sort_by, so a
+  // capped aggregate summed whatever order DOL happened to return, with two
+  // consequences the `capped` note does not cover: the floor was built from an
+  // arbitrary subset rather than from the largest cases, so it was weaker than
+  // the strongest floor available; and latest_findings_end -- which is what
+  // data_currency reports as newest_findings_end_date -- was the newest date in
+  // that arbitrary subset, so a capped answer could state a vintage years older
+  // than the newest matching case while the SPEC asserts an answer is exactly as
+  // current as its newest row.
+  const fetched = await dolGet({ limit: cap + 1, filter, sort_by: "bw_atp_amt", sort: "desc" });
   const rows = fetched.slice(0, cap);
 
   let totalBackWages = 0;

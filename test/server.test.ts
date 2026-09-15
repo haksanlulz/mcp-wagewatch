@@ -450,6 +450,20 @@ describe("employer_violations", () => {
 });
 
 describe("back_wages_summary", () => {
+  it("asks for the largest cases first, so a capped floor is the strongest one (R6)", async () => {
+    // The only query in this file that carried no sort_by. Uncapped it makes no
+    // difference to the totals; capped it decides WHICH cases are summed, and
+    // which row's date becomes latest_findings_end -- i.e. the vintage
+    // data_currency reports. Unsorted, a capped answer could state a vintage
+    // years older than the newest matching case while the SPEC says an answer
+    // is exactly as current as its newest row.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
+    await call("back_wages_summary", { employer: "tyson", max_cases: 2 });
+    const url = lastUrl();
+    expect(url.searchParams.get("sort_by")).toBe("bw_atp_amt");
+    expect(url.searchParams.get("sort")).toBe("desc");
+  });
+
   it("aggregates back wages, employees, penalties, and case count", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
     const body = payload(await call("back_wages_summary", { employer: "tyson", state: "AR" }));
