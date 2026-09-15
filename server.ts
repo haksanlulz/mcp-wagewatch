@@ -1136,8 +1136,12 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   // matching rows ($900,000 ending 2001, $500,000 ending 2003, $10 ending 2026)
   // at max_cases 2: the answer states a vintage of 2003, 23 years stale, and the
   // 2026 case was in the very page fetched -- it arrived as the probe row and
-  // its date was discarded with it. Capping is the DEFAULT path, since any
-  // state-only query exceeds max_cases 1000.
+  // its date was discarded with it. Capping is the ordinary path for a populous
+  // jurisdiction rather than an edge case: `{st_cd eq "NY"}` returns 1001 rows
+  // at an ask of cap+1, so a default NY summary caps. It is NOT universal --
+  // WY returns 853 and VI 92 on the same ask, both complete answers (all three
+  // measured 2026-09-15). Which is why the sentence below is conditional on
+  // `capped` rather than always printed.
   //
   // The SPEC says an answer is exactly as current as its newest row and must say
   // so; the MUST NEVER is stale data presented as current. A second request

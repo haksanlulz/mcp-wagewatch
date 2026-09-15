@@ -473,7 +473,10 @@ describe("back_wages_summary", () => {
     // newest case is the $10 one from 2026, it arrives as the probe row, and it
     // is dropped undated. The answer's vintage is then 2003, 23 years stale, on
     // the tool whose output a caseworker pastes into a letter -- and capping is
-    // the DEFAULT path, since any state-only query exceeds max_cases 1000.
+    // the ordinary path for a populous state, not an edge case: `{st_cd eq
+    // "NY"}` returns 1001 rows at an ask of cap+1 (measured 2026-09-15), so a
+    // default NY summary caps. WY (853) and VI (92) do not, which is why the
+    // qualifier is conditional and the case below pins its absence.
     //
     // A second request could fetch the true newest date; it costs a round trip
     // against the throttle on the default path. Naming the population costs
