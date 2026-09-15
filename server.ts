@@ -942,15 +942,27 @@ async function employerViolations(args: Row): Promise<unknown> {
   if (!employer) throw new Error("employer is required.");
   const limit = clampLimit(args.limit, 20);
 
+  // The same guard as every other tool that takes a state (topCases,
+  // flaggedEmployers, backWagesSummary): `if (args.state)` let a falsy
+  // non-string through as "no state", so {state: 0} and {state: false}
+  // answered NATIONALLY here while the other three refused the identical
+  // value with `state must be a 2-letter code`. A caller who sends a falsy
+  // state to the tool they reach first got a national answer presented as the
+  // answer to their state-scoped question -- the same shape as the
+  // transposed-key defect one argument over, and the query echo reported
+  // state: null honestly while nobody was reading it. Measured 2026-09-15.
+  // normState is also called once now rather than twice.
+  const state = args.state != null && args.state !== "" ? normState(args.state) : null;
+
   const parts: FilterObject[] = [nameFilter(employer)];
-  if (args.state) parts.push({ field: "st_cd", operator: "eq", value: normState(args.state) });
+  if (state) parts.push({ field: "st_cd", operator: "eq", value: state });
   parts.push(...dateFilters(args));
 
   const { rows, hasMore } = await pageWithProbe({ filter: andAll(parts), sort_by: "bw_atp_amt", sort: "desc" }, limit);
   return {
     query: {
       employer,
-      state: args.state ? normState(args.state) : null,
+      state,
       found_after: str(args.found_after) ?? null,
       found_before: str(args.found_before) ?? null,
     },

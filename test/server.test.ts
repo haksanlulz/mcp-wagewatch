@@ -622,6 +622,40 @@ describe("violations_by_state", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("refuses a falsy non-string state on every tool, rather than answering nationally (C4)", async () => {
+    // The case above only ever sends two-letter STRINGS, so it could not see
+    // that employer_violations gated its state filter on plain truthiness while
+    // the other four used `!= null && !== ""`. {state: 0} and {state: false}
+    // were therefore refused by four tools and silently dropped by the fifth,
+    // which then answered nationally under a query echo reporting state: null.
+    // A national answer to a state-scoped question is the transposed-key defect
+    // one argument over, so the five tools have to agree.
+    for (const [tool, args] of [
+      ["violations_by_state", {}],
+      ["top_cases", {}],
+      ["employer_violations", { employer: "acme" }],
+      ["flagged_employers", {}],
+      ["back_wages_summary", {}],
+    ] as const) {
+      // 0 and false only: NaN does not survive the JSON-RPC hop, so a case
+      // built on it would be asserting against `null` and quietly passing.
+      for (const falsy of [0, false]) {
+        const res: any = await call(tool, { ...args, state: falsy });
+        expect(res.isError, `${tool} should refuse state ${String(falsy)}`).toBe(true);
+        expect(res.content[0].text).toMatch(/2-letter/i);
+      }
+    }
+    // An OMITTED state is still the national query it has always been, and an
+    // empty string is still the same as omitting it: this narrows the falsy
+    // hole without closing the documented "no state" path.
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    for (const omitted of [{}, { state: "" }, { state: null }]) {
+      const res: any = await call("top_cases", omitted);
+      expect(res.isError, `top_cases ${JSON.stringify(omitted)} should be a national query`).toBeUndefined();
+      expect(payload(res).query.state).toBeNull();
+    }
+  });
+
   it("accepts the whole federal code domain: 50 states, DC, and the territories (WW-N)", async () => {
     // Source for the domain: the Census Bureau's FIPS/USPS reference
     // https://www2.census.gov/geo/docs/reference/state.txt (STUSAB column,
