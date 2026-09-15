@@ -282,19 +282,25 @@ describe("employer_violations", () => {
     expect(new Set(filter.or.map((n: any) => `${n.field}|${n.value}`)).size).toBe(4);
   });
 
-  it("escapes LIKE metacharacters in the employer term so they match literally", async () => {
+  it("sends a LIKE metacharacter through unescaped, because DOL's engine has no escape character (R1)", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
-    // Input carries a backslash, percent, and underscore that must not act as wildcards.
+    // This test asserted the OPPOSITE until 2026-09-14: that the term arrived
+    // backslash-escaped. Live, six probes in one run, every escaped form answers
+    // HTTP 204 while its bare twin answers 200 with rows -- `%Kevin\_Misch%` and
+    // `%Kevin\%Misch%` both zero, `%Kevin_Misch%` and `%Kevin%Misch%` both two.
+    // So the escaping aimed a pattern at a literal backslash and the answer was
+    // a confident "no cases found", this dataset's worst one. Unescaped, the
+    // metacharacter widens the search, which a caller can see and narrow.
     await call("employer_violations", { employer: "a_b%c\\d" });
 
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
-    // Every case variant is escaped: the case fold happens on the raw term and
-    // escapeLike runs after it, so no variant can reintroduce a live wildcard.
     const values: string[] = filter.or.map((n: any) => n.value);
-    expect(values).toContain("%a\\_b\\%c\\\\d%"); // raw
-    expect(values).toContain("%A\\_B\\%C\\\\D%"); // uppercase
+    expect(values).toContain("%a_b%c\\d%"); // raw, byte for byte as typed
+    expect(values).toContain("%A_B%C\\D%"); // uppercase
     for (const v of values) {
-      expect(v.slice(1, -1)).not.toMatch(/(^|[^\\])[%_]/); // no unescaped wildcard inside
+      expect(v).not.toContain("\\_"); // no escape sequence reaches DOL
+      expect(v).not.toContain("\\%");
+      expect(v).not.toContain("\\\\");
     }
   });
 
@@ -634,17 +640,20 @@ describe("violations_by_state", () => {
 });
 
 describe("top_cases", () => {
-  it("filters by NAICS prefix, escaped so the term cannot act as a wildcard", async () => {
+  it("filters by NAICS prefix, sending the term unescaped (R1)", async () => {
     // violations_by_state's identical path was pinned and this one was not.
     fetchMock.mockResolvedValueOnce(jsonResponse([]));
     await call("top_cases", { naics: "72" });
     const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
     expect(filter.and).toContainEqual({ field: "naic_cd", operator: "like", value: "72%" });
 
+    // The second half asserted `7\_2%` until 2026-09-14. DOL honours no escape
+    // character, so that pattern hunts a literal backslash and matches no NAICS
+    // code at all; unescaped, the `_` widens to any one digit.
     fetchMock.mockResolvedValueOnce(jsonResponse([]));
     await call("top_cases", { naics: "7_2" });
-    const escaped = JSON.parse(lastUrl().searchParams.get("filter_object")!);
-    expect(escaped.and).toContainEqual({ field: "naic_cd", operator: "like", value: "7\\_2%" });
+    const metachar = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    expect(metachar.and).toContainEqual({ field: "naic_cd", operator: "like", value: "7_2%" });
   });
 
   it("combines state, NAICS and a date window in one and-filter", async () => {

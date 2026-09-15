@@ -594,11 +594,33 @@ function shiftIsoDate(iso: string, days: number): string {
 }
 
 /**
- * Escape SQL LIKE metacharacters so a user term matches literally. Backslash
- * first (it is the escape character), then the `%` and `_` wildcards.
+ * There is nothing to escape with: DOL's LIKE engine honours NO escape
+ * character, so this passes the term through unchanged.
+ *
+ * Settled live 2026-09-14, six probes in one run against `trade_nm`, three
+ * bare/escaped pairs in the same minute:
+ *
+ *   `%Kevin Misch%`   -> 200, case_id 1476714 + 1419247
+ *   `%Kevin Misc\h%`  -> 204   (so `\h` is a literal backslash then h)
+ *   `%Kevin_Misch%`   -> 200, both rows   (`_` IS a single-character wildcard)
+ *   `%Kevin\_Misch%`  -> 204   (escaping it does not make it literal)
+ *   `%Kevin%Misch%`   -> 200, both rows
+ *   `%Kevin\%Misch%`  -> 204
+ *
+ * Every escaped form answers zero. So the escaping this function used to do
+ * turned a term carrying `%`, `_` or `\` into a pattern hunting a literal
+ * backslash — on this dataset the worst available answer, a confident "no cases
+ * found", reached by a caller typing a character we told them was safe.
+ *
+ * Passing the metacharacter THROUGH over-matches instead: `_` widens to any one
+ * character and `%` to any run. That is the recoverable direction — extra rows
+ * arrive carrying their own employer names, so a caller can see them and narrow
+ * — and it is the only direction available until DOL's filter_object exposes an
+ * ESCAPE clause. Kept as a named function so the reason survives at the call
+ * sites, and so that day has one place to change.
  */
 function escapeLike(term: string): string {
-  return term.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+  return term;
 }
 
 /**
@@ -613,8 +635,8 @@ function escapeLike(term: string): string {
  * almost every employer in the dataset, and a single raw-cased one would miss
  * the uppercase-stored remainder. Both cases go in the OR.
  *
- * Each variant is derived from the RAW term and escaped afterwards, so the
- * metacharacter escaping cannot be bypassed by case-folding an escape sequence.
+ * Each variant is derived from the RAW term. Nothing is escaped on the way out
+ * — see escapeLike for why there is no escape character to use.
  *
  * THREE VARIANTS ARE NOT EVERY VARIANT, and the gap is the caller's to know
  * about. A name stored with internal capitals — `ABC Plumbing`, `JBS USA`,
@@ -636,8 +658,9 @@ function likeVariants(term: string): string[] {
 /**
  * Build a name filter that matches the term against trade_nm OR legal_name, in
  * the three case variants above — not in every case variant, which LIKE cannot
- * do. LIKE metacharacters are escaped so a stray `%`/`_` in the
- * input matches literally instead of acting as a wildcard. The widest form is a
+ * do. A LIKE metacharacter in the caller's term rides through as a wildcard and
+ * widens the search; escaping it is not an option DOL's engine offers, and
+ * attempting it matched nothing (escapeLike). The widest form is a
  * 6-way `or` (2 fields x 3 variants); DOL's filter engine accepts it, alone and
  * nested inside an `and` beside a state filter (both verified live 2026-09-14).
  */
