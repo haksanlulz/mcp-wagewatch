@@ -261,11 +261,13 @@ async function main(): Promise<void> {
   // being wrong about itself. CI reads this exit code as the verdict for the
   // upstream channel (§2), and GAUNTLET §4 certifies the live rung against it.
   //
-  // Today the one skip site is unreachable without a companion failure, so
-  // nothing has ever exited 0 over a skipped check -- which is exactly the
-  // dormant shape: the moment a second skip site is added, or the pinned case id
-  // stops resolving while nothing else fails, a green would be reported over a
-  // check that never ran.
+  // Today the one skip site cannot be reached alone: sampleCaseId is only null
+  // when employer_violations failed (failures > 0, exit 1) or was rate-limited
+  // (upstream > 0, exit 2). Observed both ways while probing this on 2026-09-14
+  // -- DOL 429'd a whole run and the skip rode along behind the upstream count.
+  // So nothing has ever exited 0 over a skipped check, which is the dormant
+  // shape rather than a safe one: a second skip site, or this one gaining a
+  // cause of its own, turns it into a green over a check that never ran.
   if (skipped > 0) {
     console.error("smoke: some checks did not run; a skip is not a pass");
     process.exit(1);
