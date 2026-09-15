@@ -215,15 +215,23 @@ function extractRows(json: unknown): Row[] {
     for (const key of ["data", "records", "results"]) {
       if (Array.isArray(obj[key])) return obj[key] as Row[];
     }
-    // A 200 whose body is a non-null object with none of the known record arrays
-    // is an API-level error envelope (e.g. {"status":"error","message":"quota
-    // exceeded"}), NOT an empty result set. Failing open here would report a false
-    // "0 cases" / "no wage-theft history", so reject it.
-    throw new PermanentError(
-      "DOL API returned an unrecognized response: " + JSON.stringify(json).slice(0, 300),
-    );
   }
-  return [];
+  // Anything that is not an array and carries no known record array is an answer
+  // this code does not understand: an error envelope ({"status":"error",
+  // "message":"quota exceeded"}), a bare JSON string, a number, or a literal
+  // null. Reading ANY of them as an empty result set reports a false "0 cases" /
+  // "no wage-theft history", so reject rather than fail open.
+  //
+  // The object case was rejected here from the start and the rest fell through a
+  // trailing `return []`, which is the same fail-open one type away: a 200
+  // carrying `null` or `"quota exceeded"` rendered as count 0 plus the
+  // name-retry hint, isError undefined.
+  //
+  // A genuinely empty answer never reaches this function: dolGetOnce returns []
+  // for a 204 or an empty body before JSON.parse is called.
+  throw new PermanentError(
+    "DOL API returned an unrecognized response: " + JSON.stringify(json).slice(0, 300),
+  );
 }
 
 /**

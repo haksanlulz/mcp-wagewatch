@@ -419,6 +419,34 @@ describe("employer_violations", () => {
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain("unrecognized response");
   });
+
+  // The object shape above was rejected from the start; every OTHER non-array
+  // JSON value fell through a trailing `return []` and was rendered as count 0
+  // carrying the name-retry hint, with isError undefined -- the same false "no
+  // wage-theft history" one type away. A real empty answer cannot arrive here:
+  // dolGetOnce returns [] for a 204 or an empty body before JSON.parse (R2).
+  for (const [label, body] of [
+    ["a literal null", null],
+    ["a bare JSON string", "quota exceeded"],
+    ["a number", 0],
+    ["a boolean", false],
+  ] as const) {
+    it(`rejects ${label} body instead of reading it as zero cases (R2)`, async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(body));
+      const res: any = await call("employer_violations", { employer: "acme" });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("unrecognized response");
+    });
+  }
+
+  it("still reads a 204 as a real empty answer, not an unrecognized one (R2)", async () => {
+    // The guard above must not swallow the single most load-bearing answer this
+    // dataset gives. 204 returns before JSON.parse, so it stays count 0.
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 204, text: async () => "" });
+    const body = payload(await call("employer_violations", { employer: "nonesuch" }));
+    expect(body.count).toBe(0);
+    expect(body.cases).toEqual([]);
+  });
 });
 
 describe("back_wages_summary", () => {
