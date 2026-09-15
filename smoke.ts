@@ -6,8 +6,10 @@
 //
 //   npm run smoke
 //
-// Exit codes: 0 all checks passed · 1 a check failed · 2 upstream was unusable
-// (429 / 5xx / transport), which is a statement about DOL, not about this code.
+// Exit codes: 0 every check ran and passed · 1 a check failed OR did not run ·
+// 2 upstream was unusable (429 / 5xx / transport), which is a statement about
+// DOL, not about this code. A skipped check exits 1 with the failures, because
+// the alternative is reporting green over a check nothing performed.
 //
 // WHY THE ASSERTIONS ARE THE POINT. This file used to print body.count and move
 // on, so every tool passed by not throwing. The defect that closed in WW-1 --
@@ -255,7 +257,19 @@ async function main(): Promise<void> {
     console.error("smoke: DOL was unavailable for at least one check — rerun before reading this as a pass");
     process.exit(2);
   }
-  if (skipped > 0) console.log("smoke: some checks did not run; a skip is not a pass");
+  // A skip printed that sentence and then exited 0 anyway, which is the sentence
+  // being wrong about itself. CI reads this exit code as the verdict for the
+  // upstream channel (§2), and GAUNTLET §4 certifies the live rung against it.
+  //
+  // Today the one skip site is unreachable without a companion failure, so
+  // nothing has ever exited 0 over a skipped check -- which is exactly the
+  // dormant shape: the moment a second skip site is added, or the pinned case id
+  // stops resolving while nothing else fails, a green would be reported over a
+  // check that never ran.
+  if (skipped > 0) {
+    console.error("smoke: some checks did not run; a skip is not a pass");
+    process.exit(1);
+  }
 }
 
 main().catch((err) => {
