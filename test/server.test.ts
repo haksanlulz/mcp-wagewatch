@@ -529,6 +529,38 @@ describe("back_wages_summary", () => {
     expect(note).toContain("the totals are a floor");
   });
 
+  it("qualifies BOTH ends of a capped findings range, not just the latest (WW-R2)", async () => {
+    // earliest_findings_start is the min over the same summed subset, printed one
+    // line above latest_findings_end. Qualifying only the latest end teaches a
+    // reader that the other end is exact. Here the OLDEST matching case (1990)
+    // is the $10 probe row, dropped undated, so the published start is 2000.
+    const row = (bw: number, start: string, end: string) => ({
+      case_id: `c-${bw}`,
+      trade_nm: "ACME",
+      st_cd: "NY",
+      bw_atp_amt: bw,
+      findings_start_date: start,
+      findings_end_date: end,
+    });
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        data: [
+          row(900000, "2000-01-01T00:00:00", "2001-01-01T00:00:00"),
+          row(500000, "2002-01-01T00:00:00", "2003-01-01T00:00:00"),
+          row(10, "1990-01-01T00:00:00", "1991-01-01T00:00:00"),
+        ],
+      }),
+    );
+    const body = payload(await call("back_wages_summary", { state: "NY", max_cases: 2 }));
+    expect(body.capped).toBe(true);
+    expect(body.earliest_findings_start).toBe("2000-01-01T00:00:00");
+    const note = String(body.note);
+    expect(note).toContain("2 largest matching cases only");
+    expect(note).toMatch(/earliest_findings_start/);
+    expect(note).toMatch(/latest_findings_end/);
+    expect(note).toMatch(/oldest matching case may be far older/i);
+  });
+
   it("claims nothing about the vintage population when the answer is not capped", async () => {
     // The qualifier is a statement about a capped subset. On a complete answer
     // latest_findings_end IS the newest matching case, so the sentence would be

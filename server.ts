@@ -1192,11 +1192,14 @@ async function backWagesSummary(args: Row): Promise<unknown> {
       // date rather than as a property of the subset it was computed over -- and
       // data_currency then republishes it as newest_findings_end_date, which is
       // the SPEC's own field. See the sort comment above for the measurement.
+      // earliest_findings_start is the min over the same subset, so it is named
+      // too: qualifying one end of the range reads as vouching for the other.
       (fetched.length > cap
-        ? " Sorted by back wages, so on a capped answer latest_findings_end (and the " +
-          "newest_findings_end_date derived from it) is the newest date among the " +
-          `${cap} largest matching cases only -- the newest matching case may be far more ` +
-          "recent. Narrow the query, or raise max_cases, before citing this as the vintage."
+        ? " Sorted by back wages, so on a capped answer both ends of the findings range, " +
+          "earliest_findings_start and latest_findings_end (and the newest_findings_end_date " +
+          `derived from it), come from the ${cap} largest matching cases only -- the oldest ` +
+          "matching case may be far older and the newest matching case may be far more " +
+          "recent. Narrow the query, or raise max_cases, before citing either date."
         : "") +
       // A $0 total reads as an employer with no wage-theft history, which is the
       // most citable thing this tool produces and the worst thing to get wrong.
