@@ -370,6 +370,21 @@ describe("employer_violations", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("does NOT retry a missing DOL_API_KEY: one attempt, no backoff, setup message (WW-R1)", async () => {
+    // A missing key is a local configuration error (and the .mcpb bundle's
+    // first-run state); asking again 500ms and 2000ms later cannot change it.
+    // fetch is never reached on this path, so attempts are counted by the
+    // backoff sleeps withRetry takes between them: one attempt = zero sleeps.
+    delete process.env.DOL_API_KEY;
+    const sleep = vi.spyOn(globalThis, "setTimeout");
+    const res: any = await call("employer_violations", { employer: "acme" });
+    const backoffs = sleep.mock.calls.filter(([, ms]) => ms === 500 || ms === 2000);
+    expect(backoffs).toHaveLength(0);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("DOL_API_KEY is not set");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("handles an empty result set cleanly", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }));
     const body = payload(await call("employer_violations", { employer: "nonesuch" }));

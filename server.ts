@@ -49,11 +49,17 @@ const SUMMARY_CAP = 1000;
 // Auth
 // ---------------------------------------------------------------------------
 
-/** Read the DOL API key from the environment, or throw a clear setup error. */
+/**
+ * Read the DOL API key from the environment, or throw a clear setup error.
+ *
+ * The error is a PermanentError so withRetry does not retry it: a missing key is
+ * a local configuration error (and a fresh .mcpb install's first-run state), and
+ * asking again after RETRY_BACKOFF_MS cannot change the answer.
+ */
 function apiKey(): string {
   const key = process.env.DOL_API_KEY?.trim();
   if (!key) {
-    throw new Error(
+    throw new PermanentError(
       `DOL_API_KEY is not set. Get a free key at ${KEY_SIGNUP_URL} and set DOL_API_KEY in your environment.`,
     );
   }
@@ -132,7 +138,8 @@ class HttpError extends Error {
 
 // A response we understood well enough to know it will not improve: a non-JSON
 // body, or a shape this code does not recognise. Usually a rejected key, which
-// answers identically however many times it is asked.
+// answers identically however many times it is asked. apiKey() throws it too:
+// a missing DOL_API_KEY is local configuration, not a transport failure.
 class PermanentError extends Error {}
 
 /**
