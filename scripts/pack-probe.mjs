@@ -119,6 +119,23 @@ try {
   if (malformed.length) fail(`tools missing name/description/inputSchema: ${malformed.map((t) => t.name).join(", ")}`);
   ok(`tools/list -> ${list.length}: ${list.map((t) => t.name).join(", ")}`);
 
+  // Same literal list as scripts/mcpb-probe.mjs and GAUNTLET §1. A non-empty,
+  // well-formed list is not the documented set: a renamed or dropped tool
+  // passed the checks above (WW-R3, 2026-09-25).
+  const served = list.map((t) => t.name).sort();
+  const documented = [
+    "back_wages_summary",
+    "case_detail",
+    "employer_violations",
+    "flagged_employers",
+    "top_cases",
+    "violations_by_state",
+  ];
+  if (JSON.stringify(served) !== JSON.stringify(documented)) {
+    fail(`tools/list served ${served.join(", ")}; the six documented are ${documented.join(", ")}`);
+  }
+  ok("tools/list -> the six documented tools");
+
   console.log("PASS — the published artifact starts and serves its tools.");
 } finally {
   // Teardown is best-effort and must never decide the verdict: an EBUSY on a
