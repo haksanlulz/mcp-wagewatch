@@ -276,7 +276,7 @@ Mutation probes, 2026-09-14, each restored after the run:
 | restoring the backslash escaping in `escapeLike` (R1) | the name filter's unescaped-term case, and nothing else. Re-measured 2026-09-15 after `naics` became a digits-only domain (C2): the NAICS case can no longer carry a metacharacter, so it stays green and this row no longer names it |
 | bypassing `normNaics` at both call sites (C2) | the digits-only refusal case, and only that one |
 | `employer_violations`' state guard back to `if (args.state)` (C4) | the falsy-state case, and only that one |
-| `back_wages_summary`'s capped vintage qualifier → never emitted (C1) | the capped-population case, and only that one |
+| `back_wages_summary`'s capped vintage qualifier → never emitted (C1, WW-R2) | the capped-population case and the both-ends case, and only those two. Re-measured 2026-09-25 after WW-R2 added the both-ends case |
 | the same qualifier → emitted unconditionally (C1) | the not-capped case, and only that one |
 | `extractRows` back to rejecting only object bodies (R2) | the four unrecognized-body cases; the 204-is-a-real-empty-answer case stays green, correctly |
 | the page-ceiling branch of `truncationNote` made unreachable (R3) | the ceiling case, and only that one |
