@@ -233,10 +233,10 @@ npm run verify:pack  # packs the tarball, installs it in a throwaway project, la
 npm run verify:mcpb  # packs the .mcpb bundle, extracts it cold, launches the manifest's entry_point, speaks MCP
 ```
 
-Counts, measured 2026-09-15:
+Counts, measured 2026-09-25:
 
-- App: 2273 lines (`server.ts` 1374, `smoke.ts` 280, `scripts/mcpb-probe.mjs` 217, `scripts/lib/zip.mjs` 172, `scripts/pack-probe.mjs` 129, `scripts/pack-mcpb.mjs` 93, `index.ts` 8). `find . -type f \( -name '*.ts' -o -name '*.mjs' \) -not -path './node_modules/*' -not -path './dist/*' -not -path './test/*' | xargs wc -l`
-- Tests: 1645 lines, 108 tests in 2 files. `find ./test -name '*.test.ts' | xargs wc -l` for the lines; the test count is vitest's. The grep `grep -cE '^\s*(it|test)\(' test/*.test.ts` reads 100, because two groups are generated in a loop: the per-tool unknown-argument cases (one `it(` for six tests) and the unrecognized-body cases (one for four).
+- App: 2300 lines (`server.ts` 1384, `smoke.ts` 280, `scripts/mcpb-probe.mjs` 217, `scripts/lib/zip.mjs` 172, `scripts/pack-probe.mjs` 146, `scripts/pack-mcpb.mjs` 93, `index.ts` 8). `find . -type f \( -name '*.ts' -o -name '*.mjs' \) -not -path './node_modules/*' -not -path './dist/*' -not -path './test/*' | xargs wc -l`
+- Tests: 1692 lines, 110 tests in 2 files. `find ./test -name '*.test.ts' | xargs wc -l` for the lines; the test count is vitest's. The grep `grep -cE '^\s*(it|test)\(' test/*.test.ts` reads 102, because two groups are generated in a loop: the per-tool unknown-argument cases (one `it(` for six tests) and the unrecognized-body cases (one for four).
 
   ⚠️ This block is the one thing on the page that goes stale without anyone touching it, **and it has now done so twice running.** It read `2046 / server.ts 1163` until 2026-09-14 while its own quoted command answered `2130 / 1247`. Re-measured that day to `2195 / smoke.ts 278`, and the very next commit of the same round added seven lines to `smoke.ts`, leaving it wrong again by two before the round ended, under the warning you are reading. The lesson is not "remember harder": **this block is measured LAST, after the round's final code commit, or it is measured at a tree that no longer exists.** Re-run the two commands instead of trusting the figures. A line count is the cheapest claim on this page to check and the only one that rots on its own.
 
