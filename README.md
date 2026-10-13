@@ -242,50 +242,7 @@ Counts, measured 2026-09-25:
 
 What the offline suite covers, by layer: `test/server.test.ts` runs a real MCP client and server over an in-memory transport with fetch stubbed, and asserts the request grammar (filter_object shape, LIKE metacharacters passed through unescaped and the case variants, string-coerced values and array values, inclusive date bounds, limit+1 probe row, query-param key, User-Agent, abort signal), the argument contract (unknown keys refused before any network call, one case per tool; a two-letter code outside the federal state domain refused on every tool that takes one, and all 57 accepted; a falsy non-string state refused on all five rather than answered nationally by one, while an omitted, empty or null state stays the national query; a non-digit `naics` refused on both tools that take one, and every stored code length accepted), the response normalization (field map, per-statute penalty sums, the repeat/willful flag, 204-empty as zero matches, and every unrecognized 200 body rejected rather than read as zero cases -- an error envelope, a bare JSON string, a number, a boolean, a literal null), the retry policy (3 attempts on 5xx, none on 4xx or a non-JSON body), the environment knobs (a bad value falls back to the documented default rather than killing the retry loop or freezing the cache), the outbound throttle (concurrent calls serialized, and the gap held between one response settling and the next request going out, measured against a mock that takes real time), the redaction of the request URL and key out of every error message, the response cache including LRU eviction on both its entry and its row ceiling, the refusal of a transposed date window and of a shape-legal date that is not a real calendar date, the truncation note on every list tool including the sentence it switches to at the page ceiling, the aggregate asking for the largest cases first, the case-coverage note on a zero-result name search, and the data_currency spec on every result shape including the aggregate's. `test/no-http-stack.test.ts` pins the dependency surface: stdio transport only, one runtime dependency. The live smoke, `verify:pack` and `verify:mcpb` cover what mocks cannot: the DOL contract, the published npm artifact and the .mcpb bundle.
 
-Mutation probes, 2026-09-14, each restored after the run:
-
-| Mutation | Reddened |
-|---|---|
-| `shiftIsoDate(after, -1)` → `0` (inclusive date bound) | 3 tests, 47 of 50 passing at the time |
-| bad-value branch of `envInt` → `false` | 4 tests, including "no tool result can carry the text 'Error: undefined'" |
-| drop the `validateArgs` call | 9 of the 11 unknown-argument tests; the coverage assertion and the accepts-declared-arguments test stay green, correctly |
-| drop `top_cases`' NAICS prefix filter | both `top_cases` filter tests |
-| `FLAG_SEARCHES.W` → `["W"]` | the willful-includes-RW test |
-| `cacheMax()` → `Infinity` | the LRU eviction test |
-| drop the row half of the eviction condition (WW-M) | the total-rows eviction case; the entry-count case stays green, correctly |
-| `cache.size > 1 && rowTotal > CACHE_MAX_ROWS` → `rowTotal > CACHE_MAX_ROWS` (WW-M) | the never-evict-what-was-just-written case, and only that one |
-| `violations_by_state`' truncation note → `undefined` | the has_more note test |
-| `top_cases`' truncation note → `undefined` (F1) | the all-four-list-tools note case |
-| `flagged_employers` back to its static note only (F1) | the all-four case and the flag-note case |
-| `employer_violations`' truncation note → `undefined` (F1) | the all-four case |
-| drop `redactSecrets` from the error path | the URL/key redaction test |
-| `queue.then(fn, fn)` → `fn()` (throttle serialization) | the serialization test, and the spacing test with it |
-| `THROTTLE_MS` → `0` | the spacing test |
-| the throttle gap re-chained onto the queue gate (true start-to-start spacing) | the spacing test, at −143ms |
-| `newestFindingsDate` scanning `findings_end_date` only (WW-A) | the aggregate-vintage case, written red first |
-| neutering the transposed-window check (WW-C) | the transposed-window case |
-| `STATE_CODES.has(code)` → `false` (WW-N) | both state-domain cases |
-| dropping `UM` from `STATE_CODES` (WW-N) | the accepts-the-whole-domain case, and only that one |
-| the calendar round-trip in `normDate` → `if (false)` (WW-L) | the rolled-over-date case and the rolled-over-bound case; the shape-only "January 2024" case stays green, correctly |
-| `capped: fetched.length > cap` → `rows.length >= cap` (WW-G) | the exact-max_cases case |
-| restoring back_wages_summary's `fields` allow-list (WW-J) | the unnamed-penalty-column case, under a mock that honours `fields` |
-| dropping either zero-result case hint (WW-B) | exactly that tool's case, one each |
-| a planted `.env` inside a bundled dependency (WW-F, `npm run verify:mcpb`) | the leaked-file check, exit 1 |
-| a planted type error in `smoke.ts`, and one in `test/` (WW-I, `npm run typecheck`) | each named with file:line, exit 1 |
-| revert WW-1's case variants (live `npm run smoke`) | 2 checks red: `employer_violations` "expected >= 2 cases, got 0" and `back_wages_summary` "expected >= 100 cases for Walmart, got 1" at $0 total; exit 1 |
-| restoring the backslash escaping in `escapeLike` (R1) | the name filter's unescaped-term case, and nothing else. Re-measured 2026-09-15 after `naics` became a digits-only domain (C2): the NAICS case can no longer carry a metacharacter, so it stays green and this row no longer names it |
-| bypassing `normNaics` at both call sites (C2) | the digits-only refusal case, and only that one |
-| `employer_violations`' state guard back to `if (args.state)` (C4) | the falsy-state case, and only that one |
-| `back_wages_summary`'s capped vintage qualifier → never emitted (C1, WW-R2) | the capped-population case and the both-ends case, and only those two. Re-measured 2026-09-25 after WW-R2 added the both-ends case |
-| the same qualifier → emitted unconditionally (C1) | the not-capped case, and only that one |
-| `extractRows` back to rejecting only object bodies (R2) | the four unrecognized-body cases; the 204-is-a-real-empty-answer case stays green, correctly |
-| the page-ceiling branch of `truncationNote` made unreachable (R3) | the ceiling case, and only that one |
-| forcing `smoke.ts` down its skip branch (R5, live `npm run smoke`) | 8 passed / 0 failed / 1 skipped, **exit 1**; the same state exited 0 before |
-| dropping `sort_by` from `back_wages_summary`'s query (R6) | the largest-cases-first case, and only that one |
-
-Superseded probe, 2026-09-11: dropping the `%` escape from `escapeLike` failed exactly one test, `employer_violations > escapes LIKE metacharacters in the employer term so they match literally` (37 of 38 passed). Kept because of what it shows: that test and that probe were both green over the defect. They pinned that the request carried the escapes, which it did; neither could say whether DOL read them, and DOL does not. A request-grammar assertion measures the request and never the contract.
-
-One note on running probes here: `npx vitest run --reporter=basic` exits 1 without running anything on vitest 4, so a probe wired that way reports every mutation as red whether or not the suite noticed. Use the default reporter and read the per-test FAIL lines.
+Every fix was mutation-probed: the code was put back to the defect and its own tests had to go red, with the rest staying green. Thirty-six probes are on record, including ones against the live smoke, the bundle probe and the typecheck. The table is in [GAUNTLET.md](GAUNTLET.md), under *Mutation-probe record*.
 
 The call-count assertions (26 in the source as of 2026-09-14, up from the 9 audited on 2026-09-11) were each kept for pinning a contract: no network call before validation passes (the largest group, one per tool since arguments are now checked up front), retry counts under the attempt ceiling, cache dedupe and LRU eviction. Policy: assert behavior and payloads, never bare invocation.
 
