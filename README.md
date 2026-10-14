@@ -246,18 +246,6 @@ Every fix was mutation-probed: the code was put back to the defect and its own t
 
 The call-count assertions (26 in the source as of 2026-09-14, up from the 9 audited on 2026-09-11) were each kept for pinning a contract: no network call before validation passes (the largest group, one per tool since arguments are now checked up front), retry counts under the attempt ceiling, cache dedupe and LRU eviction. Policy: assert behavior and payloads, never bare invocation.
 
-## What I'd do differently
-
-The full record is the escape log in [GAUNTLET.md](GAUNTLET.md) §6. The short version:
-
-- **On this dataset a zero means "no wage theft here", so a wrong input must not produce one.** A transposed date window, a rolled-over date like `2024-01-99`, a state code like `ZZ`, and an industry name typed where a NAICS code goes all reached DOL as legal-looking filters, came back empty, and read as a clean record. Each is now refused before the request. I would have started from that rule instead of finding the inputs one round at a time.
-- **Probe the upstream before designing around it.** The employer search escaped `%`, `_` and `\` for a `LIKE` filter. DOL honors no escape character, so every escaped term matched nothing. It took a live probe to show that, and one more round to act on it: the defect sat recorded as a known gap for a round before the fix.
-- **Make the mock behave like the API.** The mock ignored DOL's `fields` projection, so a projection bug could not fail a mocked test. It honors `fields` now.
-- **A live check that only runs when someone types it is not a check.** `npm run smoke` was in no CI job while the GAUNTLET marked the upstream contract green. It is a `workflow_dispatch` job now, and it fails outright when the API key secret is missing, rather than skipping and exiting 0.
-- **Re-measure documentation after the last code change, not before.** The README's counts block went stale twice in one round, the second time inside the paragraph added to warn about it.
-
-Still open: two of the three planned acceptance specs in GAUNTLET §5; employer names with internal capitals (`ABC Plumbing`) miss unless typed in the stored casing, because DOL's `LIKE` has no case-insensitive form; a capped `back_wages_summary` reports the date range of the cases it summed, not of every match; and the `.mcpb` bundle ships the SDK's unused HTTP-transport dependencies, which carry two moderate advisories.
-
 ## AI assistance
 
 This project was built with AI assistance (Claude). Correctness was established by the mocked vitest suite (a real MCP client/server pair over an in-memory transport, fetch stubbed with the real response shapes), `npm run typecheck`, and live runs of every tool against the real DOL API with a real key, which is where the query-param auth, 204-empty, and string-only-filter contract facts came from. The author reviewed the code and is accountable for it.
