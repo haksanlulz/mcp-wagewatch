@@ -235,7 +235,7 @@ function extractRows(json: unknown): Row[] {
   // name-retry hint, isError undefined.
   //
   // A genuinely empty answer never reaches this function: dolGetOnce returns []
-  // for a 204 or an empty body before JSON.parse is called.
+  // for a 204 before JSON.parse is called.
   throw new PermanentError(
     "DOL API returned an unrecognized response: " + JSON.stringify(json).slice(0, 300),
   );
@@ -356,10 +356,13 @@ async function dolGetOnce(params: QueryParams): Promise<Row[]> {
   // live 2026-08-23: three shapes all 204/len=0). That is the single most
   // load-bearing answer this dataset gives — "no concluded case found" — and
   // an empty body must parse as an empty result set, not die as non-JSON.
-  if (res.status === 204 || (res.ok && text.trim() === "")) return [];
+  if (res.status === 204) return [];
 
   if (!res.ok) {
     throw new HttpError(`DOL API request failed (HTTP ${res.status}): ${text.slice(0, 300).trim()}`, res.status);
+  }
+  if (text.trim() === "") {
+    throw new PermanentError(`DOL API returned an empty HTTP ${res.status} response; no cases cannot be inferred from a missing body.`);
   }
   let json: unknown;
   try {
@@ -378,8 +381,10 @@ async function dolGetOnce(params: QueryParams): Promise<Row[]> {
 
 /** Coerce an API value to a number (API may return numeric fields as strings). */
 function num(v: unknown): number | null {
-  if (v == null || v === "") return null;
-  const n = typeof v === "number" ? v : Number(String(v).replace(/[$,]/g, ""));
+  if (typeof v !== "number" && typeof v !== "string") return null;
+  const cleaned = typeof v === "string" ? v.replace(/[$,]/g, "").trim() : v;
+  if (cleaned === "") return null;
+  const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -397,10 +402,10 @@ function totalCivilPenalties(row: Row): number | null {
   for (const [k, v] of Object.entries(row)) {
     if (/_cmp_assd_amt$/i.test(k)) {
       const n = num(v);
-      if (n != null) {
-        sum += n;
-        found = true;
-      }
+      // A present but unreadable statute amount makes the total unknown.
+      if (n == null) return null;
+      sum += n;
+      found = true;
     }
   }
   return found ? sum : null;
@@ -1162,12 +1167,19 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   let totalBackWages = 0;
   let totalEmployees = 0;
   let totalPenalties = 0;
+  const missing = { back_wages: 0, employees_affected: 0, civil_penalties: 0 };
   let earliest: string | null = null;
   let latest: string | null = null;
   for (const row of rows) {
-    totalBackWages += num(row.bw_atp_amt) ?? 0;
-    totalEmployees += num(row.ee_violtd_cnt) ?? 0;
-    totalPenalties += totalCivilPenalties(row) ?? 0;
+    const wages = num(row.bw_atp_amt);
+    const employees = num(row.ee_violtd_cnt);
+    const penalties = totalCivilPenalties(row);
+    if (wages == null) missing.back_wages++;
+    else totalBackWages += wages;
+    if (employees == null) missing.employees_affected++;
+    else totalEmployees += employees;
+    if (penalties == null) missing.civil_penalties++;
+    else totalPenalties += penalties;
     const start = str(row.findings_start_date);
     const end = str(row.findings_end_date);
     if (start && (earliest == null || start < earliest)) earliest = start;
@@ -1178,14 +1190,19 @@ async function backWagesSummary(args: Row): Promise<unknown> {
     query: { employer: employer ?? null, state },
     case_count: rows.length,
     capped: fetched.length > cap,
-    total_back_wages: Math.round(totalBackWages * 100) / 100,
-    total_employees_affected: totalEmployees,
-    total_civil_penalties: Math.round(totalPenalties * 100) / 100,
+    total_back_wages: missing.back_wages ? null : Math.round(totalBackWages * 100) / 100,
+    total_employees_affected: missing.employees_affected ? null : totalEmployees,
+    total_civil_penalties: missing.civil_penalties ? null : Math.round(totalPenalties * 100) / 100,
+    missing_values: missing,
     earliest_findings_start: earliest,
     latest_findings_end: latest,
     note:
       "Aggregated client-side over matching cases (WHD data is one row per compliance action). " +
       "total_civil_penalties is the sum of statute-level civil money penalties. " +
+      "Employee counts are summed across cases, not a count of unique people. " +
+      (Object.values(missing).some((n) => n > 0)
+        ? "Missing or invalid amounts are unknown, not zero: affected totals are null; missing_values counts affected cases among the returned rows. "
+        : "") +
       "capped=true means results hit max_cases and the totals are a floor." +
       // The `capped` sentence above covers the TOTALS and nothing else. The
       // vintage needs its own, because latest_findings_end reads as the answer's

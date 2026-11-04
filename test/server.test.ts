@@ -150,6 +150,16 @@ describe("tool registration", () => {
 });
 
 describe("employer_violations", () => {
+  it.each(["", "   "])("refuses an empty HTTP 200 body %j and does not cache it", async (text) => {
+    fetchMock.mockResolvedValueOnce(textResponse(text));
+    const first: any = await call("employer_violations", { employer: "tyson" });
+    expect(first.isError).toBe(true);
+    expect(first.content[0].text).toMatch(/empty.*200/i);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_SMALL] }));
+    const recovered = payload(await call("employer_violations", { employer: "tyson" }));
+    expect(recovered.count).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it("returns normalized cases and sums per-statute civil penalties", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON] }));
     const res = await call("employer_violations", { employer: "tyson" });
@@ -465,6 +475,37 @@ describe("employer_violations", () => {
 });
 
 describe("back_wages_summary", () => {
+  it("does not report missing amounts as zero or as a complete total", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, {
+      ...ROW_SMALL, bw_atp_amt: null, ee_violtd_cnt: " ", flsa_cmp_assd_amt: null,
+    }] }));
+    const body = payload(await call("back_wages_summary", { employer: "tyson" }));
+    expect(body.case_count).toBe(2);
+    expect(body.capped).toBe(false);
+    expect(body.total_back_wages).toBeNull();
+    expect(body.total_employees_affected).toBeNull();
+    expect(body.total_civil_penalties).toBeNull();
+    expect(body.missing_values).toEqual({ back_wages: 1, employees_affected: 1, civil_penalties: 1 });
+    expect(body.note).toMatch(/missing.*not zero/i);
+  });
+
+  it("a missing statute amount cannot make a partial penalty sum look complete", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [{ ...ROW_TYSON, mspa_cmp_assd_amt: null }] }));
+    const body = payload(await call("back_wages_summary", { employer: "tyson" }));
+    expect(body.total_back_wages).toBe(150000.5);
+    expect(body.total_civil_penalties).toBeNull();
+    expect(body.missing_values.civil_penalties).toBe(1);
+  });
+
+  it("keeps genuine zero totals and distinguishes case employee counts from unique people", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [{ ...ROW_SMALL, bw_atp_amt: 0, ee_violtd_cnt: 0, flsa_cmp_assd_amt: 0 }] }));
+    const body = payload(await call("back_wages_summary", { employer: "tyson" }));
+    expect(body.total_back_wages).toBe(0);
+    expect(body.total_employees_affected).toBe(0);
+    expect(body.total_civil_penalties).toBe(0);
+    expect(body.missing_values).toEqual({ back_wages: 0, employees_affected: 0, civil_penalties: 0 });
+    expect(body.note).toMatch(/not.*unique people/i);
+  });
   it("asks for the largest cases first, so a capped floor is the strongest one (R6)", async () => {
     // The only query in this file that carried no sort_by. Uncapped it makes no
     // difference to the totals; capped it decides WHICH cases are summed, so the
