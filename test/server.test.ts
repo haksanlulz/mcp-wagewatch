@@ -1719,3 +1719,40 @@ describe("response cache", () => {
     expect(fetchMock.mock.calls.length).toBeGreaterThan(after);
   });
 });
+
+describe("paged summary evidence", () => {
+  it("retrieves beyond 1000 in stable order and preserves distinct identities", async () => {
+    const rows = Array.from({ length: 1102 }, (_, i) => ({ ...ROW_TYSON, case_id: i + 1, legal_name: i % 2 ? "TYSON FOODS INCORPORATED" : "UNRELATED TYSON LLC" }));
+    fetchMock.mockImplementation(async (url: URL) => {
+      expect(url.searchParams.get("sort_by")).toBe("case_id");
+      expect(url.searchParams.get("sort")).toBe("asc");
+      const offset = Number(url.searchParams.get("offset") || 0);
+      const limit = Number(url.searchParams.get("limit"));
+      return jsonResponse({ data: rows.slice(offset, offset + limit) });
+    });
+    const progress: number[] = [];
+    const result = await client.callTool({ name: "back_wages_summary", arguments: { employer: "TYSON", all_pages: true, max_cases: 2000 } }, undefined, { onprogress: p => { progress.push(p.progress); } });
+    const data = payload(result);
+    expect(data.case_count).toBe(1102);
+    expect(data.trend_coverage.complete_for_query).toBe(true);
+    expect(data.matched_employers).toHaveLength(2);
+    expect(progress.at(-1)).toBe(1102);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+  it("deduplicates an unstable repeated page and never claims completeness", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ ...ROW_TYSON }, { ...ROW_TYSON }] }));
+    const data = payload(await call("back_wages_summary", { state: "AR", all_pages: true }));
+    expect(data.case_count).toBe(1);
+    expect(data.retrieval.partial).toBe(true);
+    expect(data.trend_coverage.complete_for_query).toBe(false);
+    expect(data.retrieval.issue).toMatch(/repeated/);
+  });
+  it("uses a probe row without summing it at the requested bound", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [ROW_TYSON, ROW_SMALL] }));
+    const data = payload(await call("back_wages_summary", { state: "AR", all_pages: true, max_cases: 1 }));
+    expect(data.case_count).toBe(1);
+    expect(data.capped).toBe(true);
+    expect(data.by_year[0].partial).toBe(true);
+    expect(data.note).not.toMatch(/largest matching cases only/);
+  });
+});

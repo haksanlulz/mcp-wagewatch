@@ -205,3 +205,10 @@ Mutation probes, 2026-09-14, each restored after the run:
 Superseded probe, 2026-09-11: dropping the `%` escape from `escapeLike` failed exactly one test, `employer_violations > escapes LIKE metacharacters in the employer term so they match literally` (37 of 38 passed). Kept because of what it shows: that test and that probe were both green over the defect. They pinned that the request carried the escapes, which it did; neither could say whether DOL read them, and DOL does not. A request-grammar assertion measures the request and never the contract.
 
 One note on running probes here: `npx vitest run --reporter=basic` exits 1 without running anything on vitest 4, so a probe wired that way reports every mutation as red whether or not the suite noticed. Use the default reporter and read the per-test FAIL lines.
+
+
+### 2026-11-04 — Local release preparation (gpt-6-astra)
+
+Prepared 1.2.0; Add inclusive date/industry annual summaries and opt-in case-ID paging up to 10,000 cases. Progress/cancellation, duplicate-ID detection, explicit incomplete coverage and separate source employer identities prevent misleading annual or corporate comparisons. Package and bundle checks are required before this local candidate is considered ready. No publication, push or deployment is authorized in this task.
+
+Verification outcome (gpt-6-astra): 125 tests; typecheck/build, clean npm installation, bundle validation/startup/list and all nine smoke checks passed. A real 1,100-row paged query retained partial coverage; cancellation returned no completed partial report. Two live employer-comparison attempts hit HTTP 429; this comparison-specific live check remains unverified. Identity separation, duplicate-ID interruption and bound/probe behavior pass regression tests. No publish, push or deploy.

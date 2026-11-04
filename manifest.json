@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mcp-wagewatch",
   "display_name": "WageWatch — DOL wage and hour enforcement",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Employer wage-theft history from the U.S. DOL Wage and Hour Division enforcement dataset: back wages owed, civil penalties, employees affected, and the repeat/willful violator flag.",
   "long_description": "Wraps the WHISARD compliance-action dataset (every concluded WHD compliance action since FY2005) served from the DOL Open Data API. Built for worker-justice nonprofits, legal-aid intake and union researchers: search an employer by name, aggregate what they were made to pay, list the largest cases in a state or industry, and pull the per-statute breakdown of one case.\n\nEvery answer states its vintage. WHD publishes concluded investigations on a lag, so these are historical enforcement records rather than an employer's present compliance state, and an empty result means no concluded published case was found — not that none exists.\n\nRead-only: the server queries the public DOL API and sends nothing anywhere.",
   "author": {

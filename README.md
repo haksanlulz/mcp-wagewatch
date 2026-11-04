@@ -15,6 +15,16 @@ The data is the WHISARD compliance-action dataset (every concluded WHD complianc
 | `top_cases` | `state`, `naics`, `found_after`, `found_before`, `limit` (all optional) | The largest cases by back wages nationally, in a state, and/or in a date window. No employer name needed. |
 | `flagged_employers` | `state`, `flag` (`R` default, `W`, or `RW`), `limit` | Cases carrying the WHD repeat/willful violator flag, each case stating its own flag. `R` returns repeat **and** both-flagged (`RW`) cases, `W` returns willful and `RW`; `RW` returns only cases flagged both. WHD characterization, not a court finding. |
 
+## Paged retrieval (1.2.0 local candidate)
+
+`back_wages_summary` additionally accepts `all_pages: true`: page through matches in case-ID order, up to `max_cases` (default and maximum 10,000 in this mode). Default mode remains the largest 1,000 cases. Example: `back_wages_summary({state: "NY", all_pages: true, max_cases: 5000})`.
+
+Pages contain at most 500 rows. Missing or repeated case IDs stop retrieval with an explicit incomplete-coverage issue; duplicate rows are not summed twice. A probe row distinguishes an exact bound from additional results. MCP progress reports retrieved cases. Cancellation prevents further pages after the in-flight request settles; a cancelled result is not returned as a finished total. Paging is bounded and is not an atomic source snapshot.
+
+Use `retrieval.partial` and `trend_coverage.complete_for_query` to check completeness, including source inconsistencies that do not set `capped`. `matched_employers` preserves each distinct source legal name, trade name and address with separate totals. Similar names, common brands or missing identity fields do not prove common ownership. Queries can overlap; do not sum employer-comparison columns. Source dates describe the retrieved subset, not all enforcement activity. This candidate has not been published.
+
+The largest-case and 1,000-row descriptions below refer to default mode. In paged mode a capped response is a case-ID-ordered subset, and neither its annual series nor its earliest/latest dates represents all matching cases.
+
 ## Data source
 
 For a yearly industry view, call `back_wages_summary` with a state, a NAICS prefix, and a findings-date window. Each `by_year` bucket includes cases, back wages, employee counts, penalties, missing-value counts, and its findings-date range. A `null` year retains cases with missing or invalid dates. Years with no returned cases are omitted, not filled with asserted zeroes. If `capped` is true, the buckets cover the largest matching cases only and are **not a complete annual series**; narrow the date/industry window or increase `max_cases` before comparing years. Findings-end years describe the period investigated, not an enforcement or payment date.

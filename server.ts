@@ -802,7 +802,7 @@ const TOOLS: Tool[] = [
     name: "back_wages_summary",
     description:
       "Aggregate total back wages, employees affected, civil penalties, and case count for an employer-name and/or state query. Computed client-side over up to " +
-      `${SUMMARY_CAP} matching cases. Includes by_year totals grouped by findings-end year and explicit partial-data coverage. Optional inclusive date bounds and NAICS industry prefix. At least one of employer or state is required.`,
+      `${SUMMARY_CAP} largest matching cases by default, or page through up to 10000 with all_pages=true. Includes by_year totals, exact source employer identities, progress and explicit partial-data coverage. Optional inclusive date bounds and NAICS industry prefix. At least one of employer or state is required.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -813,8 +813,9 @@ const TOOLS: Tool[] = [
         state: { type: "string", description: "2-letter state code (e.g. \"CA\")." },
         max_cases: {
           type: "integer",
-          description: `Max cases to aggregate over (1-${SUMMARY_CAP}, default ${SUMMARY_CAP}).`,
+          description: `Max cases to aggregate over (default ${SUMMARY_CAP}; up to 10000 with all_pages=true).`,
         },
+        all_pages: { type: "boolean", description: "Page through matches in case-id order, up to max_cases (maximum 10000). Reports progress and supports cancellation. Default false retains the largest-case sample." },
         naics: { type: "string", description: "Industry NAICS prefix (1-6 digits), e.g. 72 for accommodation and food services." },
         found_after: { type: "string", description: FOUND_AFTER_DESC },
         found_before: { type: "string", description: FOUND_BEFORE_DESC },
@@ -1150,7 +1151,8 @@ function annualCases(rows: Row[], partial: boolean) {
     .map(([year, group]) => ({ year, ...summarizeCases(group), partial }));
 }
 
-async function backWagesSummary(args: Row): Promise<unknown> {
+async function backWagesSummary(args: Row, context?: { signal: AbortSignal; progress: (count: number, total: number) => Promise<void> }): Promise<unknown> {
+  if (args.all_pages != null && typeof args.all_pages !== "boolean") throw new Error("all_pages must be a boolean.");
   const employer = str(args.employer);
   const state = args.state != null && args.state !== "" ? normState(args.state) : null;
   if (!employer && !state) {
@@ -1158,8 +1160,8 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   }
   const cap = (() => {
     const n = num(args.max_cases);
-    if (n == null) return SUMMARY_CAP;
-    return Math.max(1, Math.min(SUMMARY_CAP, Math.floor(n)));
+    if (n == null) return args.all_pages === true ? 10000 : SUMMARY_CAP;
+    return Math.max(1, Math.min(args.all_pages === true ? 10000 : SUMMARY_CAP, Math.floor(n)));
   })();
 
   const parts: FilterObject[] = [];
@@ -1218,11 +1220,45 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   // that is a per-call round trip against a hard rate limiter on the default
   // path. Naming the population the date came from costs nothing and is what the
   // SPEC needs, so the note below does that whenever the answer is capped.
-  const fetched = await dolGet({ limit: cap + 1, filter, sort_by: "bw_atp_amt", sort: "desc" });
+  const fetched: Row[] = [];
+  let pagingIssue: string | null = null;
+  if (args.all_pages === true) {
+    const seen = new Set<string>();
+    let offset = 0;
+    while (fetched.length <= cap) {
+      context?.signal.throwIfAborted();
+      const limit = Math.min(500, cap + 1 - fetched.length);
+      const page = await dolGet({ limit, offset, filter, sort_by: "case_id", sort: "asc" });
+      context?.signal.throwIfAborted();
+      for (const row of page) {
+        const id = str(row.case_id);
+        if (!id || seen.has(id)) {
+          pagingIssue = "Missing or repeated case IDs interrupted paging; the returned subset is incomplete. The source may have changed during retrieval.";
+          break;
+        }
+        seen.add(id);
+        fetched.push(row);
+      }
+      await context?.progress(Math.min(fetched.length, cap), cap);
+      if (pagingIssue || page.length < limit) break;
+      offset += page.length;
+    }
+  } else {
+    fetched.push(...await dolGet({ limit: cap + 1, filter, sort_by: "bw_atp_amt", sort: "desc" }));
+  }
   const rows = fetched.slice(0, cap);
   const totals = summarizeCases(rows);
   const missing = totals.missing_values;
   const capped = fetched.length > cap;
+  const partial = capped || pagingIssue !== null;
+  const employers = new Map<string, { identity: Row; rows: Row[] }>();
+  for (const row of rows) {
+    const identity = Object.fromEntries(["trade_nm", "legal_name", "street_addr_1_txt", "cty_nm", "st_cd", "zip_cd"].map(key => [key, str(row[key]) ?? null]));
+    const key = JSON.stringify(identity);
+    const group = employers.get(key) ?? { identity, rows: [] };
+    group.rows.push(row);
+    employers.set(key, group);
+  }
 
   return {
     query: { employer: employer ?? null, state, ...(naics ? { naics } : {}),
@@ -1231,11 +1267,15 @@ async function backWagesSummary(args: Row): Promise<unknown> {
     },
     ...totals,
     capped,
-    by_year: annualCases(rows, capped),
+    retrieval: { mode: args.all_pages === true ? "paged_case_id" : "largest_cases", max_cases: cap, partial, issue: pagingIssue,
+      note: "Paging is bounded and is not an atomic snapshot of DOL data. Cancellation stops additional pages after any in-flight request finishes." },
+    matched_employers: [...employers.values()].map(group => ({ ...group.identity, ...summarizeCases(group.rows) })),
+    identity_note: "Each group preserves the exact source legal name, trade name and address. Name matches are not proof of common ownership, affiliation or identity; totals may include unrelated similarly named businesses. Missing identity fields remain unknown.",
+    by_year: annualCases(rows, partial),
     trend_coverage: {
       grouped_by: "findings_end_date",
-      complete_for_query: !capped,
-      note: (capped ? "Only the largest matching cases are included, not a complete annual series. Narrow the date/industry query or raise max_cases before comparing years. " : "All cases returned for this query are grouped by findings-end year. ") +
+      complete_for_query: !partial,
+      note: (partial ? (args.all_pages === true ? "Only the retrieved subset is included; paging stopped at a bound or source inconsistency. " : "Only the largest matching cases are included, not a complete annual series. Narrow the date/industry query or raise max_cases before comparing years. ") : "All cases returned for this query are grouped by findings-end year. ") +
         "These are findings-period end years, not enforcement or payment dates. A null year contains missing or invalid dates. An absent year is not an asserted zero. Missing amounts remain unknown within each year; employee counts are not unique people.",
     },
     note:
@@ -1253,7 +1293,7 @@ async function backWagesSummary(args: Row): Promise<unknown> {
       // the SPEC's own field. See the sort comment above for the measurement.
       // earliest_findings_start is the min over the same subset, so it is named
       // too: qualifying one end of the range reads as vouching for the other.
-      (fetched.length > cap
+      (fetched.length > cap && args.all_pages !== true
         ? " Sorted by back wages, so on a capped answer both ends of the findings range, " +
           "earliest_findings_start and latest_findings_end (and the newest_findings_end_date " +
           `derived from it), come from the ${cap} largest matching cases only -- the oldest ` +
@@ -1412,13 +1452,13 @@ function withDataCurrency(result: unknown): unknown {
 
 export function createServer(): Server {
   const server = new Server(
-    { name: "mcp-wagewatch", version: "1.1.0" },
+    { name: "mcp-wagewatch", version: "1.2.0" },
     { capabilities: { tools: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
     const handler = HANDLERS[name];
     const tool = TOOLS.find((t) => t.name === name);
@@ -1428,7 +1468,13 @@ export function createServer(): Server {
     try {
       const given = (args ?? {}) as Row;
       validateArgs(name, Object.keys(tool.inputSchema.properties ?? {}), given);
-      const result = await handler(given);
+      const result = name === "back_wages_summary" ? await backWagesSummary(given, {
+        signal: extra.signal,
+        progress: async (progress, total) => {
+          const progressToken = request.params._meta?.progressToken;
+          if (progressToken !== undefined) await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress, total, message: `Retrieved ${progress} cases (limit ${total})` } });
+        },
+      }) : await handler(given);
       return { content: [{ type: "text", text: JSON.stringify(withDataCurrency(result), null, 2) }] };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
