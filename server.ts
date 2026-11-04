@@ -751,7 +751,7 @@ const CASE_RETRY_HINT =
 // Tool definitions
 // ---------------------------------------------------------------------------
 
-// One string per bound, shared by all three tools that take a date window, so
+// One string per bound, shared by all tools that take a date window, so
 // the promise a caller reads cannot drift from the one the filter keeps. Both
 // bounds are inclusive; dateFilters is where that is made true.
 const FOUND_AFTER_DESC =
@@ -802,7 +802,7 @@ const TOOLS: Tool[] = [
     name: "back_wages_summary",
     description:
       "Aggregate total back wages, employees affected, civil penalties, and case count for an employer-name and/or state query. Computed client-side over up to " +
-      `${SUMMARY_CAP} matching cases. At least one of employer or state is required.`,
+      `${SUMMARY_CAP} matching cases. Includes by_year totals grouped by findings-end year and explicit partial-data coverage. Optional inclusive date bounds and NAICS industry prefix. At least one of employer or state is required.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -815,6 +815,9 @@ const TOOLS: Tool[] = [
           type: "integer",
           description: `Max cases to aggregate over (1-${SUMMARY_CAP}, default ${SUMMARY_CAP}).`,
         },
+        naics: { type: "string", description: "Industry NAICS prefix (1-6 digits), e.g. 72 for accommodation and food services." },
+        found_after: { type: "string", description: FOUND_AFTER_DESC },
+        found_before: { type: "string", description: FOUND_BEFORE_DESC },
       },
       additionalProperties: false,
     },
@@ -1096,6 +1099,57 @@ async function flaggedEmployers(args: Row): Promise<unknown> {
   };
 }
 
+/** Shared arithmetic for the whole query and its annual buckets. */
+function summarizeCases(rows: Row[]) {
+  let totalBackWages = 0;
+  let totalEmployees = 0;
+  let totalPenalties = 0;
+  const missing = { back_wages: 0, employees_affected: 0, civil_penalties: 0 };
+  let earliest: string | null = null;
+  let latest: string | null = null;
+  for (const row of rows) {
+    const wages = num(row.bw_atp_amt);
+    const employees = num(row.ee_violtd_cnt);
+    const penalties = totalCivilPenalties(row);
+    if (wages == null) missing.back_wages++;
+    else totalBackWages += wages;
+    if (employees == null) missing.employees_affected++;
+    else totalEmployees += employees;
+    if (penalties == null) missing.civil_penalties++;
+    else totalPenalties += penalties;
+    const start = str(row.findings_start_date);
+    const end = str(row.findings_end_date);
+    if (start && (earliest == null || start < earliest)) earliest = start;
+    if (end && (latest == null || end > latest)) latest = end;
+  }
+  return {
+    case_count: rows.length,
+    total_back_wages: missing.back_wages ? null : Math.round(totalBackWages * 100) / 100,
+    total_employees_affected: missing.employees_affected ? null : totalEmployees,
+    total_civil_penalties: missing.civil_penalties ? null : Math.round(totalPenalties * 100) / 100,
+    missing_values: missing,
+    earliest_findings_start: earliest,
+    latest_findings_end: latest,
+  };
+}
+
+function annualCases(rows: Row[], partial: boolean) {
+  const groups = new Map<number | null, Row[]>();
+  for (const row of rows) {
+    const date = str(row.findings_end_date)?.slice(0, 10);
+    let year: number | null = null;
+    try {
+      if (date && normDate(date, "findings_end_date")) year = Number(date.slice(0, 4));
+    } catch { /* Unknown or impossible source dates stay in the undated bucket. */ }
+    const group = groups.get(year) ?? [];
+    group.push(row);
+    groups.set(year, group);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a ?? Infinity) - (b ?? Infinity))
+    .map(([year, group]) => ({ year, ...summarizeCases(group), partial }));
+}
+
 async function backWagesSummary(args: Row): Promise<unknown> {
   const employer = str(args.employer);
   const state = args.state != null && args.state !== "" ? normState(args.state) : null;
@@ -1111,6 +1165,9 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   const parts: FilterObject[] = [];
   if (employer) parts.push(nameFilter(employer));
   if (state) parts.push({ field: "st_cd", operator: "eq", value: state });
+  const naics = normNaics(args.naics);
+  if (naics) parts.push({ field: "naic_cd", operator: "like", value: `${escapeLike(naics)}%` });
+  parts.push(...dateFilters(args));
   const filter: FilterObject = parts.length === 1 ? parts[0] : { and: parts };
 
   // No `fields` projection. totalCivilPenalties scans every *_cmp_assd_amt key
@@ -1163,39 +1220,24 @@ async function backWagesSummary(args: Row): Promise<unknown> {
   // SPEC needs, so the note below does that whenever the answer is capped.
   const fetched = await dolGet({ limit: cap + 1, filter, sort_by: "bw_atp_amt", sort: "desc" });
   const rows = fetched.slice(0, cap);
-
-  let totalBackWages = 0;
-  let totalEmployees = 0;
-  let totalPenalties = 0;
-  const missing = { back_wages: 0, employees_affected: 0, civil_penalties: 0 };
-  let earliest: string | null = null;
-  let latest: string | null = null;
-  for (const row of rows) {
-    const wages = num(row.bw_atp_amt);
-    const employees = num(row.ee_violtd_cnt);
-    const penalties = totalCivilPenalties(row);
-    if (wages == null) missing.back_wages++;
-    else totalBackWages += wages;
-    if (employees == null) missing.employees_affected++;
-    else totalEmployees += employees;
-    if (penalties == null) missing.civil_penalties++;
-    else totalPenalties += penalties;
-    const start = str(row.findings_start_date);
-    const end = str(row.findings_end_date);
-    if (start && (earliest == null || start < earliest)) earliest = start;
-    if (end && (latest == null || end > latest)) latest = end;
-  }
+  const totals = summarizeCases(rows);
+  const missing = totals.missing_values;
+  const capped = fetched.length > cap;
 
   return {
-    query: { employer: employer ?? null, state },
-    case_count: rows.length,
-    capped: fetched.length > cap,
-    total_back_wages: missing.back_wages ? null : Math.round(totalBackWages * 100) / 100,
-    total_employees_affected: missing.employees_affected ? null : totalEmployees,
-    total_civil_penalties: missing.civil_penalties ? null : Math.round(totalPenalties * 100) / 100,
-    missing_values: missing,
-    earliest_findings_start: earliest,
-    latest_findings_end: latest,
+    query: { employer: employer ?? null, state, ...(naics ? { naics } : {}),
+      ...(args.found_after ? { found_after: str(args.found_after) } : {}),
+      ...(args.found_before ? { found_before: str(args.found_before) } : {}),
+    },
+    ...totals,
+    capped,
+    by_year: annualCases(rows, capped),
+    trend_coverage: {
+      grouped_by: "findings_end_date",
+      complete_for_query: !capped,
+      note: (capped ? "Only the largest matching cases are included, not a complete annual series. Narrow the date/industry query or raise max_cases before comparing years. " : "All cases returned for this query are grouped by findings-end year. ") +
+        "These are findings-period end years, not enforcement or payment dates. A null year contains missing or invalid dates. An absent year is not an asserted zero. Missing amounts remain unknown within each year; employee counts are not unique people.",
+    },
     note:
       "Aggregated client-side over matching cases (WHD data is one row per compliance action). " +
       "total_civil_penalties is the sum of statute-level civil money penalties. " +

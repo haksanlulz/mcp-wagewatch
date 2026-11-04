@@ -9,13 +9,15 @@ The data is the WHISARD compliance-action dataset (every concluded WHD complianc
 | Tool | Arguments | Returns |
 |------|-----------|---------|
 | `employer_violations` | `employer` (required), `state`, `found_after`, `found_before`, `limit` | Enforcement cases matching the employer name, largest back wages first. Per case: employer, location, findings dates, back wages, civil penalties, employees affected, violation count. |
-| `back_wages_summary` | `employer` and/or `state` (at least one), `max_cases` | Aggregate totals across matching cases, case count, and findings date range. An affected total is `null` when source values are missing; `missing_values` counts them per metric. Employee counts are summed across cases, not unique people. |
+| `back_wages_summary` | `employer` and/or `state` (at least one), `naics`, `found_after`, `found_before`, `max_cases` | Aggregate totals plus `by_year` totals grouped by findings-end year. Date bounds are inclusive; `naics` is an industry prefix. `trend_coverage` and each bucket's `partial` flag expose capping. Missing amounts produce `null` totals with per-metric counts. Employee counts are summed across cases, not unique people. |
 | `violations_by_state` | `state` (required), `naics`, `found_after`, `found_before`, `limit` | Top cases in a state where a violation was found, ordered by back wages. Optional NAICS-prefix industry filter. |
 | `case_detail` | `case_id` (required) | Full record for one case, including the per-statute breakdown (which laws were cited: FLSA, MSPA, H-1B, FMLA, Davis-Bacon, child labor, and so on). |
 | `top_cases` | `state`, `naics`, `found_after`, `found_before`, `limit` (all optional) | The largest cases by back wages nationally, in a state, and/or in a date window. No employer name needed. |
 | `flagged_employers` | `state`, `flag` (`R` default, `W`, or `RW`), `limit` | Cases carrying the WHD repeat/willful violator flag, each case stating its own flag. `R` returns repeat **and** both-flagged (`RW`) cases, `W` returns willful and `RW`; `RW` returns only cases flagged both. WHD characterization, not a court finding. |
 
 ## Data source
+
+For a yearly industry view, call `back_wages_summary` with a state, a NAICS prefix, and a findings-date window. Each `by_year` bucket includes cases, back wages, employee counts, penalties, missing-value counts, and its findings-date range. A `null` year retains cases with missing or invalid dates. Years with no returned cases are omitted, not filled with asserted zeroes. If `capped` is true, the buckets cover the largest matching cases only and are **not a complete annual series**; narrow the date/industry window or increase `max_cases` before comparing years. Findings-end years describe the period investigated, not an enforcement or payment date.
 
 - Base URL: `https://apiprod.dol.gov/v4`
 - Query path: `GET /get/WHD/enforcement/json` (agency `WHD`, endpoint `enforcement`, table `WHD_enforcement`)

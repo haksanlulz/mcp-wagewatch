@@ -129,6 +129,9 @@ async function main(): Promise<void> {
       `expected >= ${BROAD_EMPLOYER_FLOOR} cases for "${BROAD_EMPLOYER}", got ${body.case_count}`,
     );
     assert(body.total_back_wages > 0, `expected non-zero back wages, got ${body.total_back_wages}`);
+    assert(Array.isArray(body.by_year) && body.by_year.length > 0, "expected annual buckets");
+    assert(body.by_year.reduce((n: number, y: any) => n + y.case_count, 0) === body.case_count, "annual counts must reconcile to the returned cases");
+    assert(body.by_year.every((y: any) => y.partial === body.capped), "annual coverage must reflect the query cap");
     // A RELATIONSHIP, not a pinned upper bound. `capped === false` against a
     // fixed max_cases 200 was the one assertion in this file that new
     // publications could turn red for a reason that is not a defect — 49 more
@@ -184,6 +187,14 @@ async function main(): Promise<void> {
     assert(body.flsa_repeat_violator === "RW", `expected flag RW, got ${body.flsa_repeat_violator}`);
     assert(Array.isArray(body.statute_breakdown), "statute_breakdown is not an array");
     assert(body.statute_breakdown.length >= 1, "expected at least one statute on a case with violations");
+    const year = String(body.findings_end_date).slice(0, 4);
+    assert(/^\d{4}$/.test(year) && /^\d{2,6}$/.test(body.naics_code), "pinned case needs a findings date and industry for the filtered trend probe");
+    const trend = await callTool("back_wages_summary", {
+      employer: body.employer, state: body.location.state, naics: body.naics_code.slice(0, 2),
+      found_after: `${year}-01-01`, found_before: `${year}-12-31`,
+    });
+    assert(trend.case_count >= 1, "the pinned case must survive its own date and industry filters");
+    assert(trend.by_year.length === 1 && trend.by_year[0].year === Number(year), "the filtered trend must contain only the requested year");
   });
 
   if (sampleCaseId) {

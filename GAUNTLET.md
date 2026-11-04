@@ -76,6 +76,10 @@ Check: `test/server.test.ts` (tagged `spec: vintage-on-every-answer`), three cas
 
 ## §6 Escape log
 
+### 2026-11-04 — Filtered annual enforcement summaries (gpt-6-astra)
+
+`back_wages_summary` now accepts the same inclusive findings-date bounds and NAICS prefix as the list tools, and returns `by_year` buckets using the same missing-value-aware arithmetic as the overall totals. Undated/invalid-dated rows stay in a null-year bucket. Every bucket carries a partial flag when the source query is capped, and `trend_coverage` explains why the largest-case subset is not a complete annual series. Seven tests added, with four capability checks red before implementation. Final: 122 tests, both typecheck configurations, build, nine live smoke checks (including a pinned case surviving its own year/industry filters), and compiled stdio yearly summary. Source-date vintage and records-only scope retained. Local only.
+
 ### 2026-11-03 — Missing amounts must not become zero (gpt-6-astra)
 
 An empty HTTP 200 body was treated as no cases; only HTTP 204 now carries that meaning. A missing response body errors without being cached. Blank or non-numeric amounts stay unknown. Summary totals become `null` for metrics with missing source values, with per-metric `missing_values` counts; partial statute penalties cannot masquerade as complete totals. Genuine zeroes survive, and the note distinguishes case employee counts from unique people. Five new regression cases failed before the fixes. Final validation: 115 tests, both typecheck configurations, build, and live DOL smoke (9 passed, no skips). Source-vintage reporting remains based on returned findings dates. Local changes only.

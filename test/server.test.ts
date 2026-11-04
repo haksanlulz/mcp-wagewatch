@@ -475,6 +475,58 @@ describe("employer_violations", () => {
 });
 
 describe("back_wages_summary", () => {
+  it("groups annual totals by findings-end year, retaining unknown dates and missing amounts", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([
+      ROW_TYSON, ROW_SMALL,
+      { ...ROW_SMALL, case_id: 3, findings_end_date: "2022-02-02T00:00:00", bw_atp_amt: null },
+      { ...ROW_SMALL, case_id: 4, findings_end_date: null },
+      { ...ROW_SMALL, case_id: 5, findings_end_date: "2024-02-30T00:00:00" },
+    ]));
+    const body = payload(await call("back_wages_summary", { employer: "tyson" }));
+    expect(body.by_year.map((b: any) => b.year)).toEqual([2019, 2022, null]);
+    expect(body.by_year[0]).toMatchObject({ case_count: 1, total_back_wages: 5000, partial: false });
+    expect(body.by_year[1]).toMatchObject({ case_count: 2, total_back_wages: null, missing_values: { back_wages: 1 } });
+    expect(body.by_year[2]).toMatchObject({ case_count: 2, total_back_wages: 10000 });
+    expect(body.by_year.reduce((n: number, b: any) => n + b.case_count, 0)).toBe(body.case_count);
+    expect(body.trend_coverage.complete_for_query).toBe(true);
+  });
+
+  it("marks every annual bucket partial when capped and excludes the probe row", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([ROW_TYSON, ROW_SMALL]));
+    const body = payload(await call("back_wages_summary", { state: "AR", max_cases: 1 }));
+    expect(body.by_year).toHaveLength(1);
+    expect(body.by_year[0]).toMatchObject({ year: 2022, case_count: 1, total_back_wages: 150000.5, partial: true });
+    expect(body.trend_coverage.complete_for_query).toBe(false);
+    expect(body.trend_coverage.note).toMatch(/largest.*not.*complete/i);
+  });
+
+  it("applies inclusive date bounds and industry filters to the summary query", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([ROW_TYSON]));
+    const body = payload(await call("back_wages_summary", { state: "AR", naics: "31", found_after: "2022-01-01", found_before: "2022-12-31" }));
+    const filter = JSON.parse(lastUrl().searchParams.get("filter_object")!);
+    expect(filter.and).toEqual(expect.arrayContaining([
+      { field: "naic_cd", operator: "like", value: "31%" },
+      { field: "findings_end_date", operator: "gt", value: "2021-12-31T23:59:59" },
+      { field: "findings_end_date", operator: "lt", value: "2023-01-01T00:00:00" },
+    ]));
+    expect(body.query).toMatchObject({ naics: "31", found_after: "2022-01-01", found_before: "2022-12-31" });
+  });
+
+  it.each([{ found_after: "2024-02-30" }, { found_after: "2025-01-01", found_before: "2024-01-01" }, { naics: "food" }])(
+    "rejects invalid trend filters before querying: %j", async (options) => {
+      const result = await call("back_wages_summary", { state: "AR", ...options });
+      expect(result.isError).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not invent zero-valued years for an empty result", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    const body = payload(await call("back_wages_summary", { state: "AR" }));
+    expect(body.by_year).toEqual([]);
+    expect(body.trend_coverage.note).toMatch(/absent.*zero/i);
+  });
+
   it("does not report missing amounts as zero or as a complete total", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_TYSON, {
       ...ROW_SMALL, bw_atp_amt: null, ee_violtd_cnt: " ", flsa_cmp_assd_amt: null,
@@ -1267,10 +1319,10 @@ describe("wagewatch 1.1.0", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("all three date-window tools promise the same inclusive semantics, verbatim", async () => {
+  it("all four date-window tools promise the same inclusive semantics, verbatim", async () => {
     const { tools } = await client.listTools();
     const windowed = tools.filter((t) => "found_after" in ((t.inputSchema as any).properties ?? {}));
-    expect(windowed.map((t) => t.name).sort()).toEqual(["employer_violations", "top_cases", "violations_by_state"]);
+    expect(windowed.map((t) => t.name).sort()).toEqual(["back_wages_summary", "employer_violations", "top_cases", "violations_by_state"]);
     for (const t of windowed) {
       const props = (t.inputSchema as any).properties;
       for (const bound of ["found_after", "found_before"]) {
