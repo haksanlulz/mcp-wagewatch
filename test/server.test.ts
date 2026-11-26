@@ -1739,6 +1739,25 @@ describe("paged summary evidence", () => {
     expect(progress.at(-1)).toBe(1102);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+  // MCP security audit 2026-11-25 (lower-severity): an all_pages summary can hold up to 10,000 whole
+  // rows (~28 MB) and returned one matched_employers entry per distinct employer, unbounded, which a
+  // state-wide query turns into thousands of entries past any client's output limit.
+  it("bounds matched_employers to the largest by back wages and says how many matched", async () => {
+    const rows = Array.from({ length: 120 }, (_, i) => ({ ...ROW_TYSON, case_id: i + 1, legal_name: `EMPLOYER ${i}`, bw_atp_amt: (i + 1) * 100 }));
+    fetchMock.mockImplementation(async (url: URL) => {
+      const offset = Number(url.searchParams.get("offset") || 0);
+      const limit = Number(url.searchParams.get("limit"));
+      return jsonResponse({ data: rows.slice(offset, offset + limit) });
+    });
+    const data = payload(await call("back_wages_summary", { state: "AR", all_pages: true, max_cases: 500 }));
+    expect(data.case_count).toBe(120);
+    expect(data.matched_employers).toHaveLength(50);
+    expect(data.matched_employers_total).toBe(120);
+    expect(data.matched_employers[0].legal_name).toBe("EMPLOYER 119");
+    expect(data.matched_employers[49].legal_name).toBe("EMPLOYER 70");
+    expect(data.matched_employers_note).toMatch(/50 of 120/);
+  });
+
   it("deduplicates an unstable repeated page and never claims completeness", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: [{ ...ROW_TYSON }, { ...ROW_TYSON }] }));
     const data = payload(await call("back_wages_summary", { state: "AR", all_pages: true }));

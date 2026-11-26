@@ -36,6 +36,12 @@ const UA = "mcp-wagewatch/1.0 (+https://github.com/haksanlulz/mcp-wagewatch)";
 const THROTTLE_MS = 150;
 /** DOL API hard ceiling is 10,000 records / 5MB per request; we stay well under. */
 const MAX_PAGE = 100;
+/**
+ * back_wages_summary returns at most this many matched_employers groups, largest back wages first
+ * (MCP security audit 2026-11-25): an all_pages summary holds up to 10,000 whole rows, and one group per
+ * distinct employer was unbounded output. matched_employers_total and a note say when the list is cut.
+ */
+export const MAX_EMPLOYER_GROUPS = 50;
 const SUMMARY_CAP = 1000;
 
 // WHISARD has NO single total-CMP dollar field (cmp_assd_cnt is a COUNT of
@@ -1269,7 +1275,19 @@ async function backWagesSummary(args: Row, context?: { signal: AbortSignal; prog
     capped,
     retrieval: { mode: args.all_pages === true ? "paged_case_id" : "largest_cases", max_cases: cap, partial, issue: pagingIssue,
       note: "Paging is bounded and is not an atomic snapshot of DOL data. Cancellation stops additional pages after any in-flight request finishes." },
-    matched_employers: [...employers.values()].map(group => ({ ...group.identity, ...summarizeCases(group.rows) })),
+    ...(() => {
+      const groups = [...employers.values()]
+        .map(group => ({ ...group.identity, ...summarizeCases(group.rows) }))
+        .sort((a, b) => (b.total_back_wages ?? -1) - (a.total_back_wages ?? -1));
+      const shown = groups.slice(0, MAX_EMPLOYER_GROUPS);
+      return {
+        matched_employers: shown,
+        matched_employers_total: groups.length,
+        ...(groups.length > shown.length
+          ? { matched_employers_note: `Showing ${shown.length} of ${groups.length} matched employers, largest back wages first (this tool's ceiling). The totals above still cover every retrieved case; narrow the query by employer, industry or dates to list the rest.` }
+          : {}),
+      };
+    })(),
     identity_note: "Each group preserves the exact source legal name, trade name and address. Name matches are not proof of common ownership, affiliation or identity; totals may include unrelated similarly named businesses. Missing identity fields remain unknown.",
     by_year: annualCases(rows, partial),
     trend_coverage: {
