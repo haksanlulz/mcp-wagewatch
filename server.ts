@@ -1450,13 +1450,34 @@ function withDataCurrency(result: unknown): unknown {
   return { ...(result as Record<string, unknown>), data_currency: currency };
 }
 
+// MCP security audit 2026-11-25: every tool declares its hints; withAnnotations
+// refuses to list a tool that has none, so a new tool cannot ship unclassified.
+// Every tool here only reads, from DOL's public API (open world).
+const READ_REMOTE = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+const TOOL_ANNOTATIONS: Record<string, typeof READ_REMOTE> = {
+  employer_violations: READ_REMOTE,
+  back_wages_summary: READ_REMOTE,
+  violations_by_state: READ_REMOTE,
+  top_cases: READ_REMOTE,
+  flagged_employers: READ_REMOTE,
+  case_detail: READ_REMOTE,
+};
+
+function withAnnotations<T extends { name: string }>(tools: T[]): (T & { annotations: (typeof TOOL_ANNOTATIONS)[string] })[] {
+  return tools.map((t) => {
+    const annotations = TOOL_ANNOTATIONS[t.name];
+    if (!annotations) throw new Error(`tool ${t.name} has no annotations: add it to TOOL_ANNOTATIONS`);
+    return { ...t, annotations };
+  });
+}
+
 export function createServer(): Server {
   const server = new Server(
     { name: "mcp-wagewatch", version: "1.2.0" },
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: withAnnotations(TOOLS) }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
