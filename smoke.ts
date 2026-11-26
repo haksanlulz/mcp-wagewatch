@@ -48,7 +48,7 @@ class UpstreamError extends Error {}
 const UPSTREAM_SIGNATURE = /HTTP (429|5\d\d)|timed out|timeout|fetch failed|network/i;
 
 function parse(result: any) {
-  return JSON.parse(result.content[0].text);
+  return JSON.parse(result.content[1].text);
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   const callTool = async (name: string, args: Record<string, unknown>) => {
     const res: any = await client.callTool({ name, arguments: args });
     if (res.isError) {
-      const text = String(res.content[0].text);
+      const text = String(res.content[1].text);
       if (UPSTREAM_SIGNATURE.test(text)) throw new UpstreamError(text);
       throw new Error(text);
     }
@@ -256,7 +256,7 @@ async function main(): Promise<void> {
       arguments: { state: "NY", found_afer: "2024-01-01" },
     });
     assert(res.isError === true, "expected an error for a misspelled argument");
-    assert(String(res.content[0].text).includes("found_afer"), "expected the offending key to be named");
+    assert(String(res.content[1].text).includes("found_afer"), "expected the offending key to be named");
   });
 
   await client.close();

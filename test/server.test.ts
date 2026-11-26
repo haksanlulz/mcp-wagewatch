@@ -92,7 +92,7 @@ async function call(name: string, args: Record<string, unknown>) {
 
 /** Parse the JSON text payload out of a successful tool result. */
 function payload(result: any) {
-  return JSON.parse(result.content[0].text);
+  return JSON.parse(result.content[1].text);
 }
 
 // The response cache lives for the process; without this a value cached by one
@@ -154,7 +154,7 @@ describe("employer_violations", () => {
     fetchMock.mockResolvedValueOnce(textResponse(text));
     const first: any = await call("employer_violations", { employer: "tyson" });
     expect(first.isError).toBe(true);
-    expect(first.content[0].text).toMatch(/empty.*200/i);
+    expect(first.content[1].text).toMatch(/empty.*200/i);
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [ROW_SMALL] }));
     const recovered = payload(await call("employer_violations", { employer: "tyson" }));
     expect(recovered.count).toBe(1);
@@ -243,8 +243,8 @@ describe("employer_violations", () => {
     );
     const echoed: any = await call("employer_violations", { employer: "acme" });
     expect(echoed.isError).toBe(true);
-    expect(echoed.content[0].text).not.toContain("s3cr3t-dol-key-value");
-    expect(echoed.content[0].text).toContain("[redacted]");
+    expect(echoed.content[1].text).not.toContain("s3cr3t-dol-key-value");
+    expect(echoed.content[1].text).toContain("[redacted]");
 
     clearDolCache();
     fetchMock.mockImplementation((url: URL) => {
@@ -252,7 +252,7 @@ describe("employer_violations", () => {
     });
     const thrown: any = await call("employer_violations", { employer: "globex" });
     expect(thrown.isError).toBe(true);
-    expect(thrown.content[0].text).not.toContain("s3cr3t-dol-key-value");
+    expect(thrown.content[1].text).not.toContain("s3cr3t-dol-key-value");
   });
 
   it("keeps the raw-cased term in the LIKE filter, not only an uppercased one", async () => {
@@ -376,7 +376,7 @@ describe("employer_violations", () => {
     delete process.env.DOL_API_KEY;
     const res: any = await call("employer_violations", { employer: "acme" });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("DOL_API_KEY");
+    expect(res.content[1].text).toContain("DOL_API_KEY");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -391,7 +391,7 @@ describe("employer_violations", () => {
     const backoffs = sleep.mock.calls.filter(([, ms]) => ms === 500 || ms === 2000);
     expect(backoffs).toHaveLength(0);
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("DOL_API_KEY is not set");
+    expect(res.content[1].text).toContain("DOL_API_KEY is not set");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -408,7 +408,7 @@ describe("employer_violations", () => {
     );
     const res: any = await call("employer_violations", { employer: "acme" });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("non-JSON");
+    expect(res.content[1].text).toContain("non-JSON");
   });
 
   it("surfaces an HTTP error status as isError, after exhausting retries", async () => {
@@ -416,7 +416,7 @@ describe("employer_violations", () => {
     fetchMock.mockResolvedValue(textResponse("upstream boom", { ok: false, status: 500 }));
     const res: any = await call("employer_violations", { employer: "acme" });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("500");
+    expect(res.content[1].text).toContain("500");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -442,7 +442,7 @@ describe("employer_violations", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ status: "error", message: "quota exceeded" }));
     const res: any = await call("employer_violations", { employer: "acme" });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("unrecognized response");
+    expect(res.content[1].text).toContain("unrecognized response");
   });
 
   // The object shape above was rejected from the start; every OTHER non-array
@@ -460,7 +460,7 @@ describe("employer_violations", () => {
       fetchMock.mockResolvedValueOnce(jsonResponse(body));
       const res: any = await call("employer_violations", { employer: "acme" });
       expect(res.isError).toBe(true);
-      expect(res.content[0].text).toContain("unrecognized response");
+      expect(res.content[1].text).toContain("unrecognized response");
     });
   }
 
@@ -681,7 +681,7 @@ describe("back_wages_summary", () => {
   it("requires at least one of employer or state", async () => {
     const res: any = await call("back_wages_summary", {});
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toMatch(/at least one/i);
+    expect(res.content[1].text).toMatch(/at least one/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -795,7 +795,7 @@ describe("violations_by_state", () => {
   it("rejects an invalid state code with isError", async () => {
     const res: any = await call("violations_by_state", { state: "California" });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toMatch(/2-letter/i);
+    expect(res.content[1].text).toMatch(/2-letter/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -815,8 +815,8 @@ describe("violations_by_state", () => {
       for (const bad of ["ZZ", "XX", "NU", "QQ"]) {
         const res: any = await call(tool, { ...args, state: bad });
         expect(res.isError, `${tool} should refuse state ${bad}`).toBe(true);
-        expect(res.content[0].text).toContain(bad);
-        expect(res.content[0].text).toMatch(/not a US state/i);
+        expect(res.content[1].text).toContain(bad);
+        expect(res.content[1].text).toMatch(/not a US state/i);
       }
     }
     expect(fetchMock).not.toHaveBeenCalled();
@@ -842,7 +842,7 @@ describe("violations_by_state", () => {
       for (const falsy of [0, false]) {
         const res: any = await call(tool, { ...args, state: falsy });
         expect(res.isError, `${tool} should refuse state ${String(falsy)}`).toBe(true);
-        expect(res.content[0].text).toMatch(/2-letter/i);
+        expect(res.content[1].text).toMatch(/2-letter/i);
       }
     }
     // An OMITTED state is still the national query it has always been, and an
@@ -876,11 +876,11 @@ describe("violations_by_state", () => {
     for (const code of codes) {
       const res: any = await call("violations_by_state", { state: code });
       // Past normState, into the request path: the only complaint is the key.
-      expect(res.content[0].text, `state ${code} should be accepted`).toContain("DOL_API_KEY is not set");
+      expect(res.content[1].text, `state ${code} should be accepted`).toContain("DOL_API_KEY is not set");
     }
     // ...while a non-code never gets that far.
     const bad: any = await call("violations_by_state", { state: "ZZ" });
-    expect(bad.content[0].text).toMatch(/not a US state/i);
+    expect(bad.content[1].text).toMatch(/not a US state/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -963,8 +963,8 @@ describe("top_cases", () => {
           continue;
         }
         expect(res.isError, `${tool} should refuse naics ${JSON.stringify(bad)}`).toBe(true);
-        expect(res.content[0].text).toMatch(/1-6 digits/i);
-        expect(res.content[0].text).toMatch(/Nothing was queried/i);
+        expect(res.content[1].text).toMatch(/1-6 digits/i);
+        expect(res.content[1].text).toMatch(/Nothing was queried/i);
       }
     }
   });
@@ -1040,7 +1040,7 @@ describe("unknown arguments", () => {
       fetchMock.mockResolvedValue(jsonResponse([]));
       const res: any = await call(tool, { ...args, bogus_param: 12345 });
       expect(res.isError).toBe(true);
-      expect(res.content[0].text).toContain("bogus_param");
+      expect(res.content[1].text).toContain("bogus_param");
       expect(fetchMock).not.toHaveBeenCalled();
     });
   }
@@ -1048,14 +1048,14 @@ describe("unknown arguments", () => {
   it("suggests the argument a near-miss was meant to be", async () => {
     const res: any = await call("top_cases", { state: "NY", found_afer: "2024-01-01" });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("found_afer");
-    expect(res.content[0].text).toContain('did you mean "found_after"');
+    expect(res.content[1].text).toContain("found_afer");
+    expect(res.content[1].text).toContain('did you mean "found_after"');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("names every offending key and lists what the tool accepts", async () => {
     const res: any = await call("employer_violations", { employer: "acme", bogus_param: 1, stat: "NY" });
-    const text = res.content[0].text;
+    const text = res.content[1].text;
     expect(text).toContain("bogus_param");
     expect(text).toContain('"stat" (did you mean "state"?)');
     for (const accepted of ["employer", "state", "found_after", "found_before", "limit"]) {
@@ -1065,8 +1065,8 @@ describe("unknown arguments", () => {
 
   it("does not invent a suggestion for a key that resembles nothing", async () => {
     const res: any = await call("case_detail", { case_id: "1", xyzzy_plugh_frobozz: true });
-    expect(res.content[0].text).toContain("xyzzy_plugh_frobozz");
-    expect(res.content[0].text).not.toContain("did you mean");
+    expect(res.content[1].text).toContain("xyzzy_plugh_frobozz");
+    expect(res.content[1].text).not.toContain("did you mean");
   });
 
   it("lets the declared arguments through", async () => {
@@ -1306,9 +1306,9 @@ describe("wagewatch 1.1.0", () => {
     // is the only thing that can tell a mistyped window from a real absence.
     const res: any = await call("top_cases", { found_after: "2025-01-01", found_before: "2023-02-28" });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("2025-01-01");
-    expect(res.content[0].text).toContain("2023-02-28");
-    expect(res.content[0].text).toMatch(/selects nothing|later than/i);
+    expect(res.content[1].text).toContain("2025-01-01");
+    expect(res.content[1].text).toContain("2023-02-28");
+    expect(res.content[1].text).toMatch(/selects nothing|later than/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -1339,7 +1339,7 @@ describe("wagewatch 1.1.0", () => {
   it("a malformed date is rejected before any network call", async () => {
     const res: any = await call("top_cases", { found_after: "January 2024" });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("YYYY-MM-DD");
+    expect(res.content[1].text).toContain("YYYY-MM-DD");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -1351,14 +1351,14 @@ describe("wagewatch 1.1.0", () => {
     for (const bad of ["2024-01-99", "2024-13-45", "0000-00-00", "2023-02-29", "2024-04-31"]) {
       const res: any = await call("top_cases", { found_after: bad });
       expect(res.isError, `found_after ${bad} should be refused`).toBe(true);
-      expect(res.content[0].text).toContain(bad);
-      expect(res.content[0].text).toMatch(/not a real calendar date/i);
+      expect(res.content[1].text).toContain(bad);
+      expect(res.content[1].text).toMatch(/not a real calendar date/i);
       expect(fetchMock).not.toHaveBeenCalled();
     }
     // found_before gets the same treatment, named as itself.
     const res: any = await call("top_cases", { found_before: "2024-02-30" });
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("found_before");
+    expect(res.content[1].text).toContain("found_before");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -1433,7 +1433,7 @@ describe("wagewatch 1.1.0", () => {
     // which reads as "no flagged employers" rather than "that is not a flag".
     const res: any = await call("flagged_employers", { flag: "repeat" });
     expect(res.isError).toBe(true);
-    for (const legal of ["R", "W", "RW"]) expect(res.content[0].text).toContain(legal);
+    for (const legal of ["R", "W", "RW"]) expect(res.content[1].text).toContain(legal);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -1561,8 +1561,8 @@ describe("environment knobs", () => {
     const res: any = await call("employer_violations", { employer: "acme" });
     expect(fetchMock).toHaveBeenCalledTimes(3); // the documented default
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain("500");
-    expect(res.content[0].text).not.toContain("undefined");
+    expect(res.content[1].text).toContain("500");
+    expect(res.content[1].text).not.toContain("undefined");
     expect(warn.mock.calls.flat().join(" ")).toContain("DOL_HTTP_ATTEMPTS");
   });
 
@@ -1584,7 +1584,7 @@ describe("environment knobs", () => {
         process.env[knob] = bad;
         fetchMock.mockResolvedValue(jsonResponse([]));
         const res: any = await call("top_cases", { limit: 1 });
-        expect(res.content[0].text).not.toContain("Error: undefined");
+        expect(res.content[1].text).not.toContain("Error: undefined");
         delete process.env[knob];
       }
     }
