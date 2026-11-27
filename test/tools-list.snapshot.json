@@ -1,0 +1,211 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Aggregate total back wages, employees affected, civil penalties, and case count for an employer-name and/or state query. Computed client-side over up to 1000 largest matching cases by default, or page through up to 10000 with all_pages=true. Includes by_year totals, exact source employer identities, progress and explicit partial-data coverage. Optional inclusive date bounds and NAICS industry prefix. At least one of employer or state is required.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "all_pages": {
+          "description": "Page through matches in case-id order, up to max_cases (maximum 10000). Reports progress and supports cancellation. Default false retains the largest-case sample.",
+          "type": "boolean"
+        },
+        "employer": {
+          "description": "Employer name or fragment to search for. Matching is case-sensitive on DOL's side: the term is tried as typed, uppercased and title-cased, so a name stored with internal capitals (\"ABC Plumbing\", \"JBS USA\") needs that exact capitalization. If nothing matches, retry in the stored spelling or with a shorter distinctive fragment before concluding there are no cases.",
+          "type": "string"
+        },
+        "found_after": {
+          "description": "Only cases whose findings ended on or after this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.",
+          "type": "string"
+        },
+        "found_before": {
+          "description": "Only cases whose findings ended on or before this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.",
+          "type": "string"
+        },
+        "max_cases": {
+          "description": "Max cases to aggregate over (default 1000; up to 10000 with all_pages=true).",
+          "type": "integer"
+        },
+        "naics": {
+          "description": "Industry NAICS prefix (1-6 digits), e.g. 72 for accommodation and food services.",
+          "type": "string"
+        },
+        "state": {
+          "description": "2-letter state code (e.g. \"CA\").",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "back_wages_summary"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Full record for one WHD enforcement case by its case id, including the per-statute breakdown (which labor laws were violated: FLSA, MSPA, H-1B, FMLA, Davis-Bacon, child labor, etc.).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "description": "The WHD case id (from employer_violations / violations_by_state results).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id"
+      ],
+      "type": "object"
+    },
+    "name": "case_detail"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Search WHD enforcement cases by employer name (matches trade name or legal name), optionally filtered to a state. Returns each case with location, findings dates, back wages, civil penalties, and employees affected. Ordered by back wages (largest first).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "employer": {
+          "description": "Employer name or fragment to search for (e.g. \"tyson\", \"golden gate restaurant\"). Matching is case-sensitive on DOL's side: the term is tried as typed, uppercased and title-cased, so a name stored with internal capitals (\"ABC Plumbing\", \"JBS USA\") needs that exact capitalization. If nothing matches, retry in the stored spelling or with a shorter distinctive fragment before concluding there are no cases.",
+          "type": "string"
+        },
+        "found_after": {
+          "description": "Only cases whose findings ended on or after this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.",
+          "type": "string"
+        },
+        "found_before": {
+          "description": "Only cases whose findings ended on or before this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max cases to return (1-100, default 20).",
+          "type": "integer"
+        },
+        "state": {
+          "description": "Optional 2-letter state code to filter by (e.g. \"NY\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "employer"
+      ],
+      "type": "object"
+    },
+    "name": "employer_violations"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "WHD cases carrying the dataset's FLSA repeat/willful violator flag, optionally in a state. The flag values are WHD's own (per its data dictionary: R = repeat, W = willful, RW = both). R also returns RW cases and W also returns RW cases, so an employer flagged both appears in either search. Ordered by back wages.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "flag": {
+          "description": "Which WHD flag to search: \"R\" (repeat, default) and \"W\" (willful) each also return the \"RW\" (both) cases; \"RW\" returns only cases flagged both. R, W and RW are the only accepted values.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max cases to return (1-100, default 20).",
+          "type": "integer"
+        },
+        "state": {
+          "description": "Optional 2-letter state code.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "flagged_employers"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "The largest WHD enforcement cases by back wages — nationally, in a state, and/or in a date window. No employer name needed: use it to see what wage enforcement looks like in an industry or region, or to find the biggest recent actions.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "found_after": {
+          "description": "Only cases whose findings ended on or after this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.",
+          "type": "string"
+        },
+        "found_before": {
+          "description": "Only cases whose findings ended on or before this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max cases to return (1-100, default 20).",
+          "type": "integer"
+        },
+        "naics": {
+          "description": "Optional NAICS code prefix (e.g. \"72\" for accommodation and food services).",
+          "type": "string"
+        },
+        "state": {
+          "description": "Optional 2-letter state code (e.g. \"NY\").",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "top_cases"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Top WHD enforcement cases in a state (cases where a violation was found), ordered by back wages owed. Optionally filter to an industry by NAICS code prefix (e.g. \"72\" for accommodation and food services).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "found_after": {
+          "description": "Only cases whose findings ended on or after this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.",
+          "type": "string"
+        },
+        "found_before": {
+          "description": "Only cases whose findings ended on or before this ISO date (YYYY-MM-DD). Inclusive: a case that ended on this exact date is included.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max cases to return (1-100, default 20).",
+          "type": "integer"
+        },
+        "naics": {
+          "description": "Optional NAICS code prefix to filter industry (e.g. \"72\", \"722511\").",
+          "type": "string"
+        },
+        "state": {
+          "description": "2-letter state code (e.g. \"TX\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "name": "violations_by_state"
+  }
+]
