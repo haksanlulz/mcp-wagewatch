@@ -1,0 +1,2 @@
+# Read by the workspace's private-terms leak gate when it scans this repository, and only this one.
+fmla  # a federal labour statute's acronym; back_wages_summary's public description lists it among the laws violations are reported under (since 2026-07-12)
