@@ -1506,7 +1506,7 @@ function withUntrustedLabel<A extends unknown[], R extends { content: unknown[] 
 
 export function createServer(): Server {
   const server = new Server(
-    { name: "mcp-wagewatch", version: "1.2.0" },
+    { name: "mcp-wagewatch", version: "2.0.0" },
     { capabilities: { tools: {} } },
   );
 
